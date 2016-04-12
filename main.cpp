@@ -6,31 +6,21 @@
 #include <iomanip>
 #include <cstring>
 
-#define N 4
-#define NX N
-#define NY N
-#define NZ N
-#define POINTS ((NX)*(NY)*(NZ))
 #define PI (4.0*atan(1.0))
 // box size in hubble units
 #define H_LEN_FRAC 0.5
 #define dx (H_LEN_FRAC/(1.0*N))
 
-#define LOOP3(i,j,k) \
-  for(i=0; i<NX; ++i) \
-    for(j=0; j<NY; ++j) \
-      for(k=0; k<NZ; ++k)
-
-#define AREA_LOOP(j,k) \
-  for(j=0; j<NY; ++j) \
-    for(k=0; k<NZ; ++k)
-
-#define INTERNAL_LOOP3(i,j,k) \
-  for(i=1; i<NX-1; ++i) \
-    for(j=1; j<NY-1; ++j) \
-      for(k=1; k<NZ-1; ++k)
-
 /*-----------NEW DEFINITION----------------------------------------------*/
+
+#define N 16  // finest used grid # points
+#define MIN_DEPTH 4 //coarsest grids depth, cannot be larger than the depth of finest grids
+#define MAX_DEPTH 10 // max possible interation depth
+
+#define NPRE 100  //number of pre-cycle relaxation steps
+#define NPOST 100 //number of post-cycle relaxation steps
+#define NCOARSE 1000 //numer of relaxation on coarse grids
+
 
 #define LOOP3_N(i,j,k,n) \
   for(i=0; i<n; ++i) \
@@ -40,12 +30,7 @@
 #define LOOP_N3(i, n) \
   for(i=0; i<PW3(n); ++i) \
 
-#define NPRE 100 //number of pre relaxation
-#define NPOST 100 //number of post relaxation
-#define NCOARSE 1005 //numer of relaxation on coarse grids
 #define ALPHA 0.33 //coefficient of estimated truncation error
-#define MAX_DEPTH 10 //max interation depth
-#define MIN_DEPTH 2 //coarsest grids depth, cannot be larger than the depth of finest grids
 
 #define COARSE_EPS 1e-9
 #define EPS 1e-6
@@ -71,133 +56,31 @@
 typedef double real_t;
 typedef long int idx_t;
 
-void zero_array(real_t *m, idx_t n)
+#include "array_math.h"
+#include "io.h"
+
+real_t solve_volume_constraint(real_t *psi, real_t *rho, real_t *source, idx_t n)
 {
-  for(idx_t i=0; i < n; i++)
-    m[i] = 0;
-
-  return;
-}
-
-void alloc(real_t *m, idx_t n)
-{
-  m = new real_t[n*n*n];
-
-  return;
-}
-
-void print_vector(real_t *m, idx_t n)
-{
-  for(int i = 0; i < n; i++)
-    std::cout << std::fixed <<std::setprecision(7)<<m[i]<<" ";
-
-  std::cout << "\n";
-}
-
-void print_mathematica_array(real_t *m, idx_t n)
-{
-  std::cout << "{";
-  for(int i = 0; i < n; i++)
-  {
-    std::cout << "{";
-    for(int j = 0; j < n; j++)
-    {
-      std::cout << "{";
-      std::cout << std::fixed << m[G_INDEX(i, j, 0, n)];
-      for(int k = 1; k < n; k++)
-      {
-        std::cout << std::fixed << ","<<m[G_INDEX(i, j, k, n)];
-      }
-      std::cout << "}";
-      if(j != n-1)
-        std::cout << ",";
-    }
-    std::cout << "}";
-    if(i != n-1)
-      std::cout << ',';
-  }
-  std::cout << "}";
-}
-
-
-real_t integrate_array(real_t *array, idx_t n) 
-{
-  // integrate array values
-  idx_t i;
-  real_t total = 0.0;
-  real_t h = H_LEN_FRAC/(real_t)(n);
-
-  LOOP_N3(i, n)
-    total += array[i];
-
-  return total*PW3(h);
-}
-
-real_t integrate_conformal_rho(real_t *psi, real_t *rho, real_t shift, idx_t n)
-{
-  // integrate rho * (\psi + shift)^5
-  idx_t i;
-  real_t res = 0.0;
-  real_t h = H_LEN_FRAC/(real_t)(n);
-
-  LOOP_N3(i, n)
-    res += rho[i] * PW5(psi[i] + shift);
-
-  return res*PW3(h);
-}
-
-real_t integrate_conformal_rho_derivative(real_t *psi, real_t *rho,
-  real_t shift, idx_t n)
-{
-  // derivative of f(A) = \integral (\rho * 5 * (\psi + A)^4 - f  ) d V
-  // used in Newton iteration to find root
-
-  idx_t i;
-  real_t res = 0.0;
-  real_t h = H_LEN_FRAC/(real_t)(n);
-
-  LOOP_N3(i, n)
-  {
-    res += rho[i] * PW4(psi[i] + shift);
-  }
-  
-  return 5*res*PW3(h);
-}
-
-real_t exam_constraint( real_t *u, real_t *irho, real_t *irhs, real_t shift, idx_t n)
-{
-  // compute residual?
+  // Find value of A that gives a root of the function:
+  //   f(A) = \integral (\rho * (\psi + A)^5 - f  ) d V 
 
   idx_t i, j, k;
-  real_t res = 0.0;
-
-  LOOP3_N(i,j,k,n)
-  {
-    res += integrate_conformal_rho(u, irho, shift, n) - integrate_array(irhs, n);
-  }
-
-  return res;
-}
-
-real_t solve_constraint(real_t *u, real_t *irho, real_t *irhs, idx_t n)
-{
-  //Find root of function f(A) = \integral (\rho * (\psi + A)^5 - f  ) d V 
-  idx_t i, j, k;
-  real_t eps = -INF, res = NEWTON_INI;
+  real_t eps = -INF, residual = NEWTON_INI;
   real_t num, den;
 
   do
   {
-    num = integrate_conformal_rho(u, irho, res, n) - integrate_array(irhs, n);
-    den = integrate_conformal_rho_derivative(u, irho, res, n);
+    num = integrate_conformal_rho(psi, rho, residual, n)
+      - integrate_array(source, n);
+    den = integrate_conformal_rho_derivative(psi, rho, residual, n);
 
-    res -= num/den;
+    residual -= num/den;
     if( fabs(fabs(num/den) - eps) < CON_EPS )
       break;
     eps = fabs(num/den);
   } while(1);
 
-  return res;
+  return residual;
 }
 
 void shift_array_values(real_t *array, real_t shift, idx_t n)
@@ -208,68 +91,23 @@ void shift_array_values(real_t *array, real_t shift, idx_t n)
     array[i] += shift;
 }
 
-void residual(real_t *u, real_t *irho, real_t *res, idx_t n)
+void constraint_residual(real_t *psi, real_t *rho, real_t *residual, idx_t n)
 {
-  // compute residual of constraint equation
+  // compute residual of Hamiltonian constraint equation
 
   idx_t i, j, k;
   real_t h = (H_LEN_FRAC/(1.0*n));
 
   LOOP3_N(i,j,k,n)
   {
-    res[G_INDEX(i, j, k, n)] = LAP(u, i, j, k, n, h);
-    res[G_INDEX(i, j, k, n)] += irho[G_INDEX(i, j, k, n)] * PW5(u[G_INDEX(i, j, k, n)]);    
+    residual[G_INDEX(i, j, k, n)] = LAP(psi, i, j, k, n, h)
+      + rho[G_INDEX(i, j, k, n)] * PW5(psi[G_INDEX(i, j, k, n)]);    
   }
 
   return;
 }
 
-real_t relax(real_t *u, real_t *irhs, real_t *irho, idx_t n)
-{
-  // relax hamiltonian constraint?
-
-  idx_t i, j, k, ipass, isw = 0, jsw, ksw;
-  real_t temp, h = (H_LEN_FRAC/(1.0*n)), res =  INF;
-  
-  // white red grids relaxation
-  for(ipass = 0; ipass < 2; ipass++, isw = 1 - isw)
-  {
-    jsw = isw; 
-    for(i = 0; i < n; i++, jsw = 1 - jsw)
-    {
-      ksw = jsw;
-      for(j = 0; j < n; j++, ksw = 1 - ksw)
-      {
-        for(k = ksw; k < n; k+=2)
-        {
-          temp = LAP(u, i, j, k, n, h) + irho[G_INDEX(i, j, k, n)] * PW5(u[G_INDEX(i, j, k, n)]) 
-          - irhs[G_INDEX(i, j, k, n)] ;
-          u[G_INDEX(i, j, k, n)] -= temp/(-6/(h*h) + 
-          5 * irho[G_INDEX(i, j, k, n)] * PW4(u[G_INDEX(i, j, k, n)]));
-           
-        }
-      }
-    }
-  }
-  
-  // Regular Gauss-Seidel relaxation as alternative
-  /*
-  for(int i = 0; i < n; i++)
-    for(int j = 0; j < n; j++)
-      for(int k = 0; k < n; k++)
-      {
-        temp = (LAP(u, i, j, k, n, h) + irho[G_INDEX(i, j, k, n)] * PW5(u[G_INDEX(i, j, k, n)]) 
-          - irhs[G_INDEX(i, j, k, n)]) /(-6/(h*h) + 
-          5 * irho[G_INDEX(i, j, k, n)] * PW4(u[G_INDEX(i, j, k, n)]));
-          u[G_INDEX(i, j, k, n)] -= temp;
-          res = MAX(res, fabs(temp));
-          //std::cout << temp<<"\n";
-      }
-    */
-  return res;
-}
-
-real_t coarse_constraint_residual(real_t *phi, real_t *rho,
+real_t max_constraint_residual(real_t *phi, real_t *rho,
   real_t *truncation_source, idx_t n)
 {
   // Calculate max. differnce between hamiltonian constraint and truncation_source
@@ -290,17 +128,56 @@ real_t coarse_constraint_residual(real_t *phi, real_t *rho,
   return max_difference;
 }
 
-void initialize_random_array(real_t *array, idx_t n)
+real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
 {
-  // set random initial values
-  int i, j, k;
+  // relax psi to a solution of the Hamiltonian constraint
+
+  idx_t i, j, k, ipass, isw = 0, jsw, ksw;
+  real_t temp, h = (H_LEN_FRAC/(1.0*n)), res =  INF;
+  
+  // "Red-black" Newton Gauss-Seidel relaxation
+  // See, eg, Numerical Recipes P. 886.
+  for(ipass = 0; ipass < 2; ipass++, isw = 1 - isw)
+  {
+    jsw = isw; 
+    for(i = 0; i < n; i++, jsw = 1 - jsw)
+    {
+      ksw = jsw;
+      for(j = 0; j < n; j++, ksw = 1 - ksw)
+      {
+        for(k = ksw; k < n; k+=2)
+        {
+          phi[G_INDEX(i, j, k, n)] -= (
+              LAP(phi, i, j, k, n, h) - source[G_INDEX(i, j, k, n)]
+              + rho[G_INDEX(i, j, k, n)] * PW5(phi[G_INDEX(i, j, k, n)])
+            )/(
+              -6/(h*h) + 
+              5 * rho[G_INDEX(i, j, k, n)] * PW4(phi[G_INDEX(i, j, k, n)])
+            );
+        }
+      }
+    }
+  }
+  
+  // Regular Gauss-Seidel relaxation as alternative
+  /*
   LOOP3_N(i,j,k,n)
   {
-    array[G_INDEX(i, j, k, n)] = (real_t) rand()/1000;
+    phi[G_INDEX(i, j, k, n)] -= (
+        LAP(phi, i, j, k, n, h) + rho[G_INDEX(i, j, k, n)] * PW5(phi[G_INDEX(i, j, k, n)])
+        - source[G_INDEX(i, j, k, n)]
+      )/(
+        -6/(h*h) + 5 * rho[G_INDEX(i, j, k, n)] * PW4(phi[G_INDEX(i, j, k, n)])
+      );
+
+    res = MAX(res, fabs(temp));
   }
+  */
+
+  return res;
 }
 
-void solve_coarse_1(real_t *u, real_t *irhs, real_t *irho, idx_t n)
+void coarse_grid_solve_constrained(real_t *u, real_t *irhs, real_t *irho, idx_t n)
 {
   // solve the first order appproximation equation:
   //   \nabla \xi + 2 \pi \rho * 5 \xi = irhs - 2\pi \rho
@@ -317,14 +194,14 @@ void solve_coarse_1(real_t *u, real_t *irhs, real_t *irho, idx_t n)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
 
-    temp = solve_constraint(u, irho, irhs, 1<<MIN_DEPTH);
+    temp = solve_volume_constraint(u, irho, irhs, 1<<MIN_DEPTH);
     shift_array_values(u, temp, 1<<MIN_DEPTH);
     
-    eps = coarse_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
+    eps = max_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
   }
 }
 
-void solve_coarse_0(real_t *u, real_t *irhs, real_t *irho, idx_t n)
+void coarse_grid_solve(real_t *u, real_t *irhs, real_t *irho, idx_t n)
 {
   // solve the first order appproximation equation:
   //   \nabla \ksi + 2 \pi \rho * 5 \ksi = irhs - 2\pi \rho
@@ -339,7 +216,8 @@ void solve_coarse_0(real_t *u, real_t *irhs, real_t *irho, idx_t n)
   while(nn--)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
-    eps = coarse_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
+    eps = max_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
+    std::cout << "Residual: " << eps << "\n";
   }
 }
 
@@ -440,50 +318,14 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
   }
 }
 
-void lop(real_t *u, real_t *irho, real_t *out, idx_t n)
+void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t ncycle, real_t eps)
 {
-  //calculating L_h(\tilde{u}_h) used in FMG
-  idx_t i, j, k;
-  real_t h = H_LEN_FRAC/(real_t)(n);
+  // Solve non-linear constraint equation \nabla^2 \psi = -2pi \rho \psi 
+  // using Full multigrid in FAS scheme
+  // `source` is the right hand side of Numerical Recipes 2nd ed., eq. 19.6.23.
 
-  LOOP3_N(i,j,k,n)
-    out[G_INDEX(i, j, k, n)] = LAP(u, i, j, k, n, h)
-          + irho[G_INDEX(i,j,k,n)] * PW5(u[G_INDEX(i,j,k,n)]);
-  
-  return;
-}
-
-void matrix_subtract(real_t *a, real_t *b, real_t *c, idx_t n)
-{
-  idx_t i;
-  LOOP_N3(i,n)
-    c[i] = a[i] - b[i];
-}
-
-void matrix_add(real_t *a, real_t *b, real_t *c, idx_t n)
-{
-  idx_t i;
-  LOOP_N3(i,n)
-    c[i] = a[i] + b[i];
-}
-
-real_t norm(real_t *u, idx_t n)
-{
-  idx_t i;
-  real_t sum = 0.0;
-  real_t h = (H_LEN_FRAC/(real_t)n);
-
-  LOOP_N3(i,n)
-    sum += u[i]*u[i];
-
-  return sqrt(sum)/h;
-}
-
-void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps)  
-{
-  // Solve non-linear constraint equation \nebla^2 \psi = -2pi \rho \psi with using Full multigrid in FAS scheme
-  // u is the right hand side of eq. 19.6.23, which u=0, rho = rho for this equation.
-  
+  // "depth" of finest grid;
+  // finest grid is (2^DEPTH)^3
   idx_t DEPTH = 0;
 
   // iterators
@@ -491,17 +333,21 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
   idx_t n = (1<<MIN_DEPTH);
 
   // define arrays that will be used in the iteration
-  real_t *irhs[MAX_DEPTH], *itau[MAX_DEPTH], *iu[MAX_DEPTH], *irho[MAX_DEPTH], *itemp[MAX_DEPTH], tr_err, res; 
+  real_t *irhs[MAX_DEPTH], *itau[MAX_DEPTH], *iu[MAX_DEPTH],
+         *irho[MAX_DEPTH], *itemp[MAX_DEPTH], tr_err, res; 
   
-  while ((DEPTH/2) != N) 
+  // log_2(N) = DEPTH
+  while ((1<<DEPTH) != N) 
     DEPTH++;
 
+  // 1<<DEPTH = 2^DEPTH
   irho[DEPTH] = new real_t[PW3(1<<DEPTH)];
   irhs[DEPTH] = new real_t[PW3(1<<DEPTH)];
-  
+
   memcpy(irho[DEPTH], rho, sizeof(real_t)*PW3(1<<DEPTH));
-  memcpy(irhs[DEPTH], rhs, sizeof(real_t)*PW3(1<<DEPTH));
+  memcpy(irhs[DEPTH], source, sizeof(real_t)*PW3(1<<DEPTH));
   i = DEPTH;
+
   while(i > MIN_DEPTH)
   {
     irho[--i] = new real_t[PW3(1<<i)];
@@ -515,8 +361,8 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
   itemp[MIN_DEPTH] = new real_t[PW3((1<<MIN_DEPTH))];
   initialize_random_array(iu[MIN_DEPTH], (1<<MIN_DEPTH));
   //Currently using multigrid without applying constraint of integral in speed up
-  solve_coarse_0(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
-  
+  coarse_grid_solve(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
+
   for (j = MIN_DEPTH + 1; j <= DEPTH; j++)
   {
     n *= 2;
@@ -526,9 +372,9 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
     
     interpolate_coarse2fine(iu[j], iu[j-1], n);
     
+    // loop for V-cycles
     for(jc = 0; jc < ncycle; jc++)
     {
-      //std::cout << ncycle;
       nf = n;
       
       for(jj = j; jj > MIN_DEPTH; jj--)
@@ -537,14 +383,14 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
         {
           if(relax(iu[jj], irhs[jj], irho[jj], nf) < IT_EPS)
             break;
-          //shift_array_values(iu[jj], solve_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
+          //shift_array_values(iu[jj], solve_volume_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
         }
-        lop(iu[jj], irho[jj], itemp[jj], nf);
+        constraint_residual(iu[jj], irho[jj], itemp[jj], nf);
         nf = nf>>1;
         restrict_fine2coarse(itemp[jj-1], itemp[jj], nf);
         //print_vector(itemp[jj-1], PW3(nf));;
         restrict_fine2coarse(iu[jj-1], iu[jj], nf);
-        lop(iu[jj-1], irho[jj-1], itau[jj-1], nf);
+        constraint_residual(iu[jj-1], irho[jj-1], itau[jj-1], nf);
         matrix_subtract(itau[jj-1], itemp[jj-1], itau[jj-1], nf);
         if(jj == j)
           tr_err = ALPHA * norm(itau[jj-1], nf);
@@ -552,7 +398,7 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
         matrix_add(irhs[jj-1], itau[jj-1], irhs[jj-1], nf);
       }
       
-      solve_coarse_0(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
+      coarse_grid_solve(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
       
       nf = 1<<MIN_DEPTH;
       for(jj = MIN_DEPTH + 1; jj <= j; jj++)
@@ -568,22 +414,24 @@ void fas_multigrid(real_t *u, real_t *rhs, real_t *rho, idx_t ncycle, real_t eps
         {
           if(relax(iu[jj], irhs[jj], irho[jj], nf) < IT_EPS)
             break;
-          //shift_array_values(iu[jj], solve_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
+          //shift_array_values(iu[jj], solve_volume_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
         }
       }
-      lop(iu[j], irho[j], itemp[j], nf);
+      constraint_residual(iu[j], irho[j], itemp[j], nf);
       matrix_subtract(itemp[j], irhs[j], itemp[j], nf);
       res = norm(itemp[j], nf);
-      std::cout << "Depth "<<"Difference\n";
-      std::cout << j<<" "<<std::fixed<< coarse_constraint_residual(iu[j], irho[j], irhs[j], 1<<j)<<"\n\n";
+      std::cout << "max_constraint_residual at depth " << j << ":\n";
+      std::cout << std::fixed << max_constraint_residual(iu[j], irho[j], irhs[j], 1<<j)<<"\n\n";
       
       if(res < tr_err) break;
-    }
+    } // end loop for V-cycles
   }
-  std::cout << "Final Difference\n";
-  std::cout << std::fixed;
-  std::cout <<   coarse_constraint_residual(iu[DEPTH],rho,rhs,N)<<"\n";
-  memcpy(u, iu[DEPTH], sizeof(real_t) * PW3((1<<DEPTH)));
+  
+  std::cout << "Residual on coarse grid\n" << std::fixed
+            << max_constraint_residual(iu[DEPTH],rho,source,N)<<"\n";
+
+  memcpy(psi, iu[DEPTH], sizeof(real_t) * PW3((1<<DEPTH)));
+
   for(idx_t i = MIN_DEPTH; i <= DEPTH; i++)
   {
     delete [] iu[i];
@@ -616,7 +464,7 @@ int main(int argc, char **argv)
   real_t n1 = 1, n2 = 1, n3 = 1;
   real_t phi1 = 0, phi2 = 0, phi3 = 0;
 
-  LOOP3(i,j,k)
+  LOOP3_N(i,j,k,N)
   {
     idx_t p = G_INDEX(i, j, k, N);
 
@@ -627,14 +475,14 @@ int main(int argc, char **argv)
                  * sin( 2.0 * PI * n3 * (real_t)k/ (N) + phi3)/20.0;
   }
 
-  LOOP3(i,j,k)
+  LOOP3_N(i,j,k,N)
   {
     idx_t p = G_INDEX(i, j, k, N);
     // generating rho according to standard solution
     rho[p] = (-LAP(psi_trial, i, j, k, N, h) + source[p]) / PW5(psi_trial[p]);
   }
 
-  fas_multigrid(psi_solution, source, rho, 3, 1e-7);
+  fas_multigrid(psi_solution, source, rho, 20, 1e-7);
 
   freopen("rho.txt","w", stdout);
   print_mathematica_array(rho, (N));
@@ -642,7 +490,7 @@ int main(int argc, char **argv)
   print_mathematica_array(source, N);
   freopen("psi_solution.txt", "w", stdout);
   print_mathematica_array(psi_solution, (N));
-  freopen("std.txt", "w", stdout);
+  freopen("psi_trial.txt", "w", stdout);
   print_mathematica_array(psi_trial, N);
   
   delete [] psi_solution;
