@@ -183,7 +183,7 @@ real_t solve_constraint(real_t *u, real_t *irho, real_t *irhs, idx_t n)
 {
   //Find root of function f(A) = \integral (\rho * (\psi + A)^5 - f  ) d V 
   idx_t i, j, k;
-  real_t eps = -INF, res = NEWTON_INI
+  real_t eps = -INF, res = NEWTON_INI;
   real_t num, den;
 
   do
@@ -406,7 +406,7 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
     fj = j*2;
     fk = k*2;
 
-    real_t cc = u_coarse[G_INDEX(i,j,k,cn)];
+    real_t cc = u_coarse[G_INDEX(i,j,k,coarse_n)];
     u_fine[G_INDEX(fi,fj,fk,fine_n)] += cc;
     
     u_fine[G_INDEX(fi+1,fj,fk,fn)] += cc/2.0;
@@ -599,7 +599,7 @@ int main(int argc, char **argv)
   //Solving equations Lap (psi) + rho * psi^5 = source
 
   int i, j, k;
-  real_t *psi_solution, *psi_trial, *rho, *res, *source
+  real_t *psi_solution, *psi_trial, *rho, *res, *source;
   real_t h = H_LEN_FRAC/(real_t)(N);
   
   std::cout.precision(15);
@@ -638,9 +638,9 @@ int main(int argc, char **argv)
 
   freopen("rho.txt","w", stdout);
   print_mathematica_array(rho, (N));
-  freopen("rhs.txt", "w", stdout);
-  print_mathematica_array(rhs, N);
-  freopen("res.txt", "w", stdout);
+  freopen("source.txt", "w", stdout);
+  print_mathematica_array(source, N);
+  freopen("psi_solution.txt", "w", stdout);
   print_mathematica_array(psi_solution, (N));
   freopen("std.txt", "w", stdout);
   print_mathematica_array(psi_trial, N);
