@@ -13,14 +13,21 @@
 
 /*-----------NEW DEFINITION----------------------------------------------*/
 
-#define N 16  // finest used grid # points
-#define MIN_DEPTH 4 //coarsest grids depth, cannot be larger than the depth of finest grids
-#define MAX_DEPTH 10 // max possible interation depth
+// TODO: rename depth to something accurate
+// grids have sizes from 2^MIN_DEPTH to 2^MAX_DEPTH
+#define MIN_DEPTH 3 // coarsest grid depth, cannot be larger than the depth of finest grids
+#define MAX_DEPTH 4 // max possible interation depth
+#define TOTAL_DEPTHS (1 + MAX_DEPTH - MIN_DEPTH)
+// indexing scheme for selecting a grid from heirarchy of grids
+#define D_INDEX(depth) ((depth) - MIN_DEPTH)
 
-#define NPRE 100  //number of pre-cycle relaxation steps
-#define NPOST 100 //number of post-cycle relaxation steps
-#define NCOARSE 1000 //numer of relaxation on coarse grids
+// total grid points on the finest grid:
+#define N      PWROF2(MAX_DEPTH)
+#define POINTS PW3(N)
 
+#define NPRE_RELAX_STEPS 100  //number of pre-cycle relaxation steps
+#define NPOST_RELAX_STEPS 100 //number of post-cycle relaxation steps
+#define NCOARSE_RELAX_STEPS 1000 //numer of relaxation on coarse grids
 
 #define LOOP3_N(i,j,k,n) \
   for(i=0; i<n; ++i) \
@@ -50,6 +57,7 @@
 #define PW4(a) ((a)*(a)*(a)*(a))
 #define PW3(a) ((a)*(a)*(a))
 #define PW2(a) ((a)*(a))
+#define PWROF2(n) (1<<(n))
 
 #define MAX(a, b) ((a>b)? a: b )
 
@@ -83,15 +91,7 @@ real_t solve_volume_constraint(real_t *psi, real_t *rho, real_t *source, idx_t n
   return residual;
 }
 
-void shift_array_values(real_t *array, real_t shift, idx_t n)
-{
-  // shift array values; eg. to satisfy constraint
-  idx_t i;
-  LOOP_N3(i, n)
-    array[i] += shift;
-}
-
-void constraint_residual(real_t *psi, real_t *rho, real_t *residual, idx_t n)
+void compute_constraint_residual(real_t *psi, real_t *rho, real_t *residual, idx_t n)
 {
   // compute residual of Hamiltonian constraint equation
 
@@ -133,7 +133,7 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
   // relax psi to a solution of the Hamiltonian constraint
 
   idx_t i, j, k, ipass, isw = 0, jsw, ksw;
-  real_t temp, h = (H_LEN_FRAC/(1.0*n)), res =  INF;
+  real_t temp, h = (H_LEN_FRAC/(1.0*n)), residual = INF;
   
   // "Red-black" Newton Gauss-Seidel relaxation
   // See, eg, Numerical Recipes P. 886.
@@ -174,7 +174,7 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
   }
   */
 
-  return res;
+  return residual;
 }
 
 void coarse_grid_solve_constrained(real_t *u, real_t *irhs, real_t *irho, idx_t n)
@@ -186,7 +186,7 @@ void coarse_grid_solve_constrained(real_t *u, real_t *irhs, real_t *irho, idx_t 
 
   idx_t i,j,k;
   real_t  h = H_LEN_FRAC/(1<<MIN_DEPTH), eps = INF, temp;
-  idx_t nn = NCOARSE;
+  idx_t nn = NCOARSE_RELAX_STEPS;
 
   initialize_random_array(u, (1<<MIN_DEPTH));
 
@@ -210,15 +210,17 @@ void coarse_grid_solve(real_t *u, real_t *irhs, real_t *irho, idx_t n)
 
   idx_t i,j,k;
   real_t  h = H_LEN_FRAC/(1<<MIN_DEPTH), eps = INF, temp;
+  idx_t nn = NCOARSE_RELAX_STEPS;
+
   initialize_random_array(u, (1<<MIN_DEPTH));
-  idx_t nn = NCOARSE;
 
   while(nn--)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
     eps = max_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
-    std::cout << "Residual: " << eps << "\n";
+    std::cout << "Coarse Grid Solution Max. Residual: " << eps << "\r" << std::flush;
   }
+  std::cout << "\n";
 }
 
 void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse) 
@@ -270,7 +272,7 @@ void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse)
 
 void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n) 
 {
-  // interpolation scheme: 1*(1/8) + 6 * (1/16) + 12 * (1/32) + 8 * (1/64)
+  // TODO: document interpolation scheme
 
   idx_t i, j, k;
   int coarse_n = fine_n/2;
@@ -318,127 +320,160 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
   }
 }
 
-void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t ncycle, real_t eps)
+void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, real_t eps)
 {
   // Solve non-linear constraint equation \nabla^2 \psi = -2pi \rho \psi 
   // using Full multigrid in FAS scheme
   // `source` is the right hand side of Numerical Recipes 2nd ed., eq. 19.6.23.
 
-  // "depth" of finest grid;
-  // finest grid is (2^DEPTH)^3
-  idx_t DEPTH = 0;
+  std::cout << "MAX_DEPTH: " << MAX_DEPTH << " | ";
+  std::cout << "MIN_DEPTH: " << MIN_DEPTH << " | ";
+  std::cout << "TOTAL_DEPTHS: " << TOTAL_DEPTHS << "\n";
 
   // iterators
-  idx_t i, j, k, jc, nf, jj, jpre, jpost;
-  idx_t n = (1<<MIN_DEPTH);
+  idx_t depth, cycle, cycle_depth, nf;
+  idx_t pre_relax_step, post_relax_step;
 
-  // define arrays that will be used in the iteration
-  real_t *irhs[MAX_DEPTH], *itau[MAX_DEPTH], *iu[MAX_DEPTH],
-         *irho[MAX_DEPTH], *itemp[MAX_DEPTH], tr_err, res; 
+  idx_t n, depth_idx;
+  idx_t max_depth_idx, min_depth_idx;
+  max_depth_idx = D_INDEX(MAX_DEPTH);
+  min_depth_idx = D_INDEX(MIN_DEPTH);
+
+  // define a heirarchy of references to grids
+  real_t *irhs[TOTAL_DEPTHS], *itau[TOTAL_DEPTHS], *iu[TOTAL_DEPTHS],
+         *irho[TOTAL_DEPTHS], *itemp[TOTAL_DEPTHS], tr_err, res; 
   
-  // log_2(N) = DEPTH
-  while ((1<<DEPTH) != N) 
-    DEPTH++;
-
-  // 1<<DEPTH = 2^DEPTH
-  irho[DEPTH] = new real_t[PW3(1<<DEPTH)];
-  irhs[DEPTH] = new real_t[PW3(1<<DEPTH)];
-
-  memcpy(irho[DEPTH], rho, sizeof(real_t)*PW3(1<<DEPTH));
-  memcpy(irhs[DEPTH], source, sizeof(real_t)*PW3(1<<DEPTH));
-  i = DEPTH;
-
-  while(i > MIN_DEPTH)
+  // initialize arrays at different grid levels / "depths";
+  for(depth = MIN_DEPTH; depth <= MAX_DEPTH; ++depth)
   {
-    irho[--i] = new real_t[PW3(1<<i)];
-    irhs[i] = new real_t[PW3(1<<i)];
-    restrict_fine2coarse(irho[i], irho[i+1], 1<<i);
-    restrict_fine2coarse(irhs[i], irhs[i+1], 1<<i);
+    depth_idx = D_INDEX(depth);
+    std::cout << "Allocating depth: " << depth << " with index: " << depth_idx << "\n";
+    n = PWROF2(depth);
+
+    irho[depth_idx] = new real_t[PW3(n)];
+    irhs[depth_idx] = new real_t[PW3(n)];
+    iu[depth_idx] = new real_t[PW3(n)];
+    itau[depth_idx] = new real_t[PW3(n)];
+    itemp[depth_idx] = new real_t[PW3(n)];
   }
-  
-  iu[MIN_DEPTH] = new real_t[PW3((1<<MIN_DEPTH))];
-  itau[MIN_DEPTH] = new real_t[PW3((1<<MIN_DEPTH))];
-  itemp[MIN_DEPTH] = new real_t[PW3((1<<MIN_DEPTH))];
-  initialize_random_array(iu[MIN_DEPTH], (1<<MIN_DEPTH));
-  //Currently using multigrid without applying constraint of integral in speed up
-  coarse_grid_solve(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
 
-  for (j = MIN_DEPTH + 1; j <= DEPTH; j++)
+  // the "finest" grid is supplied to this function
+  memcpy(irho[max_depth_idx], rho, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+  memcpy(irhs[max_depth_idx], source, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+  memcpy(iu[max_depth_idx], psi, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+
+  // restrict rho and "rhs" from finer grids to coarser grids:
+  std::cout << "Restricting solution to coarser grids...\n" << std::flush;
+  for(depth = MAX_DEPTH-1; depth >= MIN_DEPTH; --depth)
+  { // depth = finest;  depth > coarsest; 
+    depth_idx = D_INDEX(depth);
+    n = PWROF2(depth);
+    restrict_fine2coarse(irho[depth_idx], irho[depth_idx+1], n);
+    restrict_fine2coarse(irhs[depth_idx], irhs[depth_idx+1], n);
+  }
+
+  // obtain a solution on the coarsest grid
+  // Currently using multigrid without applying constraint of integral in speed up
+  std::cout << "Obraining coarse grid solution...\n" << std::flush;
+  coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
+    irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
+
+  // Perform V-cycles at increasing depths
+  for (depth = MIN_DEPTH + 1; depth <= MAX_DEPTH; ++depth)
   {
-    n *= 2;
-    iu[j] = new real_t[PW3(n)];
-    itau[j] = new real_t[PW3(n)];
-    itemp[j] = new real_t[PW3(n)]; 
-    
-    interpolate_coarse2fine(iu[j], iu[j-1], n);
-    
-    // loop for V-cycles
-    for(jc = 0; jc < ncycle; jc++)
+    n = PWROF2(depth);
+    depth_idx = D_INDEX(depth);
+
+std::cout << "Working at depth: " << depth << " (index: " << depth_idx << ")\n" << std::flush;
+    interpolate_coarse2fine(iu[depth_idx], iu[depth_idx-1], n);
+
+    // Perform n_cycles V-cycles between MIN_DEPTH and depth
+    for(cycle = 0; cycle < n_cycles; cycle++)
     {
-      nf = n;
-      
-      for(jj = j; jj > MIN_DEPTH; jj--)
+      // perform fine->coarse steps of a V-cycle
+      for(cycle_depth = depth; cycle_depth > MIN_DEPTH; --cycle_depth)
       {
-        for(jpre =0; jpre < NPRE; jpre++)
+        idx_t cycle_depth_idx = D_INDEX(cycle_depth);
+        nf = PWROF2(cycle_depth);
+
+        // perform pre-cycle relaxation
+        for(pre_relax_step = 0; pre_relax_step < NPRE_RELAX_STEPS; pre_relax_step++)
         {
-          if(relax(iu[jj], irhs[jj], irho[jj], nf) < IT_EPS)
+          real_t eps = relax(iu[cycle_depth_idx], irhs[cycle_depth_idx],
+            irho[cycle_depth_idx], nf);
+          if(eps < IT_EPS)
             break;
-          //shift_array_values(iu[jj], solve_volume_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
+
+          // enforce volume constraint
+          // real_t volume_constraint_shift = solve_volume_constraint(
+          //   iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], nf);
+          // shift_array_values(iu[cycle_depth_idx], volume_constraint_shift, nf);
         }
-        constraint_residual(iu[jj], irho[jj], itemp[jj], nf);
-        nf = nf>>1;
-        restrict_fine2coarse(itemp[jj-1], itemp[jj], nf);
-        //print_vector(itemp[jj-1], PW3(nf));;
-        restrict_fine2coarse(iu[jj-1], iu[jj], nf);
-        constraint_residual(iu[jj-1], irho[jj-1], itau[jj-1], nf);
-        matrix_subtract(itau[jj-1], itemp[jj-1], itau[jj-1], nf);
-        if(jj == j)
-          tr_err = ALPHA * norm(itau[jj-1], nf);
-        restrict_fine2coarse(irhs[jj-1], irhs[jj], nf);
-        matrix_add(irhs[jj-1], itau[jj-1], irhs[jj-1], nf);
-      }
-      
-      coarse_grid_solve(iu[MIN_DEPTH], irhs[MIN_DEPTH], irho[MIN_DEPTH], PW3(1<<MIN_DEPTH));
-      
+
+        compute_constraint_residual(iu[cycle_depth_idx], irho[cycle_depth_idx], itemp[cycle_depth_idx], nf);
+
+        nf /= 2;
+        restrict_fine2coarse(itemp[cycle_depth_idx-1], itemp[cycle_depth_idx], nf);
+        restrict_fine2coarse(iu[cycle_depth_idx-1], iu[cycle_depth_idx], nf);
+        compute_constraint_residual(iu[cycle_depth_idx-1], irho[cycle_depth_idx-1], itau[cycle_depth_idx-1], nf);
+        matrix_subtract(itau[cycle_depth_idx-1], itemp[cycle_depth_idx-1], itau[cycle_depth_idx-1], nf);
+        
+        if(cycle_depth_idx == depth)
+          tr_err = ALPHA * norm(itau[cycle_depth_idx-1], nf);
+
+        restrict_fine2coarse(irhs[cycle_depth_idx-1], irhs[cycle_depth_idx], nf);
+        matrix_add(irhs[cycle_depth_idx-1], itau[cycle_depth_idx-1], irhs[cycle_depth_idx-1], nf);
+      } // end V-cycle
+
+      // determine solution on coarse grid given truncation error source
+      coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
+        irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
+
+      // perform coarse->fine steps in V-cycle
       nf = 1<<MIN_DEPTH;
-      for(jj = MIN_DEPTH + 1; jj <= j; jj++)
+      for(cycle_depth = MIN_DEPTH + 1; cycle_depth <= depth; cycle_depth++)
       {
+        idx_t cycle_depth_idx = D_INDEX(cycle_depth);
+        restrict_fine2coarse(itemp[cycle_depth_idx - 1], iu[cycle_depth_idx], nf);
+        matrix_subtract(iu[cycle_depth_idx - 1], itemp[cycle_depth_idx-1], itemp[cycle_depth_idx-1], nf);
+        nf *= 2;
+        interpolate_coarse2fine(itau[cycle_depth_idx], itemp[cycle_depth_idx-1], nf);
         
-        restrict_fine2coarse(itemp[jj - 1], iu[jj], nf);
-        matrix_subtract(iu[jj - 1], itemp[jj-1], itemp[jj-1], nf);
-        nf *=2;
-        interpolate_coarse2fine(itau[jj], itemp[jj-1], nf);
-        
-        matrix_add(iu[jj], itau[jj], iu[jj], nf);
-        for(jpost = 0; jpost < NPOST; jpost++)
+        matrix_add(iu[cycle_depth_idx], itau[cycle_depth_idx], iu[cycle_depth_idx], nf);
+        for(post_relax_step = 0; post_relax_step < NPOST_RELAX_STEPS; post_relax_step++)
         {
-          if(relax(iu[jj], irhs[jj], irho[jj], nf) < IT_EPS)
+          if(relax(iu[cycle_depth_idx], irhs[cycle_depth_idx], irho[cycle_depth_idx], nf) < IT_EPS)
             break;
-          //shift_array_values(iu[jj], solve_volume_constraint(iu[jj], irho[jj], irhs[jj], nf), nf);
+          //shift_array_values(iu[cycle_depth_idx], solve_volume_constraint(iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], nf), nf);
         }
       }
-      constraint_residual(iu[j], irho[j], itemp[j], nf);
-      matrix_subtract(itemp[j], irhs[j], itemp[j], nf);
-      res = norm(itemp[j], nf);
-      std::cout << "max_constraint_residual at depth " << j << ":\n";
-      std::cout << std::fixed << max_constraint_residual(iu[j], irho[j], irhs[j], 1<<j)<<"\n\n";
+
+      // Check residual on finest grid
+      compute_constraint_residual(iu[depth_idx], irho[depth_idx], itemp[depth_idx], nf);
+      matrix_subtract(itemp[depth_idx], irhs[depth_idx], itemp[depth_idx], nf);
+      res = norm(itemp[depth_idx], nf);
+      std::cout << "max_constraint_residual at depth " << depth << " is:\n";
+      std::cout << std::fixed << max_constraint_residual(iu[depth_idx], irho[depth_idx], irhs[depth_idx], 1<<depth)<<"\n\n";
       
       if(res < tr_err) break;
     } // end loop for V-cycles
   }
   
   std::cout << "Residual on coarse grid\n" << std::fixed
-            << max_constraint_residual(iu[DEPTH],rho,source,N)<<"\n";
+            << max_constraint_residual(iu[D_INDEX(MIN_DEPTH)],
+                irho[D_INDEX(MIN_DEPTH)], irhs[D_INDEX(MIN_DEPTH)], PWROF2(MIN_DEPTH))
+            << "\n";
 
-  memcpy(psi, iu[DEPTH], sizeof(real_t) * PW3((1<<DEPTH)));
+  memcpy(psi, iu[max_depth_idx], sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
 
-  for(idx_t i = MIN_DEPTH; i <= DEPTH; i++)
+  for(depth = MIN_DEPTH; depth <= MAX_DEPTH; ++depth)
   {
-    delete [] iu[i];
-    delete [] irho[i];
-    delete [] irhs[i];
-    delete [] itemp[i];
-    delete [] itau[i];
+    depth_idx = D_INDEX(depth);
+    delete [] iu[depth_idx];
+    delete [] irho[depth_idx];
+    delete [] irhs[depth_idx];
+    delete [] itemp[depth_idx];
+    delete [] itau[depth_idx];
   }
 }
 

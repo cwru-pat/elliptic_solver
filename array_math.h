@@ -87,3 +87,11 @@ void initialize_random_array(real_t *array, idx_t n)
   }
 }
 
+void shift_array_values(real_t *array, real_t shift, idx_t n)
+{
+  // shift array values; eg. to satisfy constraint
+  idx_t i;
+  LOOP_N3(i, n)
+    array[i] += shift;
+}
+
