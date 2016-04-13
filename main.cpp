@@ -17,7 +17,7 @@
 // TODO: rename depth to something accurate
 // grids have sizes from 2^MIN_DEPTH to 2^MAX_DEPTH
 #define MIN_DEPTH 3 // coarsest grid depth, cannot be larger than the depth of finest grids
-#define MAX_DEPTH 5 // max possible interation depth
+#define MAX_DEPTH 6 // max possible interation depth
 #define TOTAL_DEPTHS (1 + MAX_DEPTH - MIN_DEPTH)
 // indexing scheme for selecting a grid from heirarchy of grids
 #define D_INDEX(depth) ((depth) - MIN_DEPTH)
@@ -26,9 +26,9 @@
 #define N      PWROF2(MAX_DEPTH)
 #define POINTS PW3(N)
 
-#define NPRE_RELAX_STEPS 100  //number of pre-cycle relaxation steps
+#define NPRE_RELAX_STEPS 1000  //number of pre-cycle relaxation steps
 #define NPOST_RELAX_STEPS 1000 //number of post-cycle relaxation steps
-#define NCOARSE_RELAX_STEPS 1000 //numer of relaxation on coarse grids
+#define NCOARSE_RELAX_STEPS 20000 //numer of relaxation on coarse grids
 
 #define LOOP3_N(i,j,k,n) \
   for(i=0; i<n; ++i) \
@@ -220,9 +220,9 @@ void coarse_grid_solve(real_t *u, real_t *irhs, real_t *irho, idx_t n)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
     eps = max_constraint_residual(u, irho, irhs, 1<<MIN_DEPTH);
-    std::cout << "Coarse Grid Solution Max. Residual: " << eps << "\r" << std::flush;
   }
-  std::cout << "\n";
+
+  std::cout << "Coarse Grid Solution Max. Residual: " << eps << "\n" << std::flush;
 }
 
 void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse) 
@@ -378,13 +378,18 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
 
   // obtain a solution on the coarsest grid
   // Currently using multigrid without applying constraint of integral in speed up
-  std::cout << "Obraining coarse grid solution...\n" << std::flush;
+  std::cout << "Obtaining coarse grid solution...\n" << std::flush;
   coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
     irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
 
   // Perform V-cycles at increasing depths
   for (depth = MIN_DEPTH + 1; depth <= MAX_DEPTH; ++depth)
   {
+    std::cout << "\nPerforming V-cycle from depth " << MIN_DEPTH
+              << " to depth " << depth << ".\n"
+              << "-------------------------------------------\n\n"
+              << std::flush;
+
     n = PWROF2(depth);
     depth_idx = D_INDEX(depth);
 
@@ -455,7 +460,7 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
       compute_constraint_residual(iu[depth_idx], irho[depth_idx], itemp[depth_idx], nf);
       matrix_subtract(itemp[depth_idx], irhs[depth_idx], itemp[depth_idx], nf);
       res = norm(itemp[depth_idx], nf);
-      std::cout << "max_constraint_residual at depth " << depth << " is:\n";
+      std::cout << "Grid at depth " << depth << " max residual is: ";
       std::cout << std::fixed << max_constraint_residual(iu[depth_idx], irho[depth_idx], irhs[depth_idx], 1<<depth)<<"\n\n";
       
       if(res < tr_err) break;
@@ -520,7 +525,7 @@ int main(int argc, char **argv)
     rho[p] = (-LAP(psi_trial, i, j, k, N, h) + source[p]) / PW5(psi_trial[p]);
   }
 
-  fas_multigrid(psi_solution, source, rho, 5, 1e-7);
+  fas_multigrid(psi_solution, source, rho, 3, 1e-7);
 
   freopen("rho.txt","w", stdout);
   print_mathematica_array(rho, (N));
