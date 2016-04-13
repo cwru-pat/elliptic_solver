@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <cstring>
+#include <omp.h>
 
 #define PI (4.0*atan(1.0))
 // box size in hubble units
@@ -16,7 +17,7 @@
 // TODO: rename depth to something accurate
 // grids have sizes from 2^MIN_DEPTH to 2^MAX_DEPTH
 #define MIN_DEPTH 3 // coarsest grid depth, cannot be larger than the depth of finest grids
-#define MAX_DEPTH 4 // max possible interation depth
+#define MAX_DEPTH 5 // max possible interation depth
 #define TOTAL_DEPTHS (1 + MAX_DEPTH - MIN_DEPTH)
 // indexing scheme for selecting a grid from heirarchy of grids
 #define D_INDEX(depth) ((depth) - MIN_DEPTH)
@@ -26,7 +27,7 @@
 #define POINTS PW3(N)
 
 #define NPRE_RELAX_STEPS 100  //number of pre-cycle relaxation steps
-#define NPOST_RELAX_STEPS 100 //number of post-cycle relaxation steps
+#define NPOST_RELAX_STEPS 1000 //number of post-cycle relaxation steps
 #define NCOARSE_RELAX_STEPS 1000 //numer of relaxation on coarse grids
 
 #define LOOP3_N(i,j,k,n) \
@@ -137,6 +138,7 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
   
   // "Red-black" Newton Gauss-Seidel relaxation
   // See, eg, Numerical Recipes P. 886.
+  /*
   for(ipass = 0; ipass < 2; ipass++, isw = 1 - isw)
   {
     jsw = isw; 
@@ -157,10 +159,11 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
         }
       }
     }
-  }
+  }*/
   
   // Regular Gauss-Seidel relaxation as alternative
-  /*
+  // Loop has race condition; parallelization is unsafe
+  #pragma omp parallel for default(shared) private(i,j,k)
   LOOP3_N(i,j,k,n)
   {
     phi[G_INDEX(i, j, k, n)] -= (
@@ -170,9 +173,8 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
         -6/(h*h) + 5 * rho[G_INDEX(i, j, k, n)] * PW4(phi[G_INDEX(i, j, k, n)])
       );
 
-    res = MAX(res, fabs(temp));
+    // residual = MAX(res, fabs(temp));
   }
-  */
 
   return residual;
 }
@@ -228,6 +230,7 @@ void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse)
   // restrict scheme: 1*(1/8) + 6 * (1/16) + 12 * (1/32) + 8 * (1/64)
 
   idx_t i, j, k, fn = n_coarse*2, fi, fj, fk;
+  #pragma omp parallel for default(shared) private(i,j,k)
   LOOP3_N(i,j,k,n_coarse)
   {
     fi = i*2;
@@ -280,6 +283,7 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
 
   zero_array(u_fine, PW3(fine_n));
 
+  #pragma omp parallel for default(shared) private(i,j,k)
   LOOP3_N(i,j,k,coarse_n)
   {
     fi = i*2;
@@ -384,7 +388,6 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
     n = PWROF2(depth);
     depth_idx = D_INDEX(depth);
 
-std::cout << "Working at depth: " << depth << " (index: " << depth_idx << ")\n" << std::flush;
     interpolate_coarse2fine(iu[depth_idx], iu[depth_idx-1], n);
 
     // Perform n_cycles V-cycles between MIN_DEPTH and depth
@@ -486,7 +489,7 @@ int main(int argc, char **argv)
   real_t h = H_LEN_FRAC/(real_t)(N);
   
   std::cout.precision(15);
-
+  omp_set_num_threads(4);
   srand(129);
 
   psi_solution = new real_t[PW3(N)];
@@ -517,7 +520,7 @@ int main(int argc, char **argv)
     rho[p] = (-LAP(psi_trial, i, j, k, N, h) + source[p]) / PW5(psi_trial[p]);
   }
 
-  fas_multigrid(psi_solution, source, rho, 20, 1e-7);
+  fas_multigrid(psi_solution, source, rho, 5, 1e-7);
 
   freopen("rho.txt","w", stdout);
   print_mathematica_array(rho, (N));
