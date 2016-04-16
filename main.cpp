@@ -5,7 +5,9 @@
 #include <cstdlib>
 #include <iomanip>
 #include <cstring>
-#include <omp.h>
+#ifdef USE_OPENMP
+  #include <omp.h>
+#endif
 
 #define PI (4.0*atan(1.0))
 // box size in hubble units
@@ -16,8 +18,8 @@
 
 // TODO: rename depth to something accurate
 // grids have sizes from 2^MIN_DEPTH to 2^MAX_DEPTH
-#define MIN_DEPTH 3 // coarsest grid depth, cannot be larger than the depth of finest grids
-#define MAX_DEPTH 6 // max possible interation depth
+#define MIN_DEPTH 4 // coarsest grid depth, cannot be larger than the depth of finest grids
+#define MAX_DEPTH 5 // max possible interation depth
 #define TOTAL_DEPTHS (1 + MAX_DEPTH - MIN_DEPTH)
 // indexing scheme for selecting a grid from heirarchy of grids
 #define D_INDEX(depth) ((depth) - MIN_DEPTH)
@@ -27,8 +29,8 @@
 #define POINTS PW3(N)
 
 #define NPRE_RELAX_STEPS 1000  //number of pre-cycle relaxation steps
-#define NPOST_RELAX_STEPS 1000 //number of post-cycle relaxation steps
-#define NCOARSE_RELAX_STEPS 20000 //numer of relaxation on coarse grids
+#define NPOST_RELAX_STEPS 2000 //number of post-cycle relaxation steps
+#define NCOARSE_RELAX_STEPS 2000 //numer of relaxation on coarse grids
 
 #define LOOP3_N(i,j,k,n) \
   for(i=0; i<n; ++i) \
@@ -92,7 +94,7 @@ real_t solve_volume_constraint(real_t *psi, real_t *rho, real_t *source, idx_t n
   return residual;
 }
 
-void compute_constraint_residual(real_t *psi, real_t *rho, real_t *residual, idx_t n)
+void compute_constraint_deficit(real_t *psi, real_t *rho, real_t *residual, idx_t n)
 {
   // compute residual of Hamiltonian constraint equation
 
@@ -138,28 +140,28 @@ real_t relax(real_t *phi, real_t *source, real_t *rho, idx_t n)
   
   // "Red-black" Newton Gauss-Seidel relaxation
   // See, eg, Numerical Recipes P. 886.
-  /*
-  for(ipass = 0; ipass < 2; ipass++, isw = 1 - isw)
-  {
-    jsw = isw; 
-    for(i = 0; i < n; i++, jsw = 1 - jsw)
-    {
-      ksw = jsw;
-      for(j = 0; j < n; j++, ksw = 1 - ksw)
-      {
-        for(k = ksw; k < n; k+=2)
-        {
-          phi[G_INDEX(i, j, k, n)] -= (
-              LAP(phi, i, j, k, n, h) - source[G_INDEX(i, j, k, n)]
-              + rho[G_INDEX(i, j, k, n)] * PW5(phi[G_INDEX(i, j, k, n)])
-            )/(
-              -6/(h*h) + 
-              5 * rho[G_INDEX(i, j, k, n)] * PW4(phi[G_INDEX(i, j, k, n)])
-            );
-        }
-      }
-    }
-  }*/
+  // for(ipass = 0; ipass < 2; ipass++, isw = 1 - isw)
+  // {
+  //   jsw = isw;
+  //   for(i = 0; i < n; i++, jsw = 1 - jsw)
+  //   {
+  //     ksw = jsw;
+  //     for(j = 0; j < n; j++, ksw = 1 - ksw)
+  //     {
+  //       #pragma omp parallel for default(shared) private(k)
+  //       for(k = ksw; k < n; k+=2)
+  //       {
+  //         phi[G_INDEX(i, j, k, n)] -= (
+  //             LAP(phi, i, j, k, n, h) - source[G_INDEX(i, j, k, n)]
+  //             + rho[G_INDEX(i, j, k, n)] * PW5(phi[G_INDEX(i, j, k, n)])
+  //           )/(
+  //             -6/(h*h) + 
+  //             5 * rho[G_INDEX(i, j, k, n)] * PW4(phi[G_INDEX(i, j, k, n)])
+  //           );
+  //       }
+  //     }
+  //   }
+  // }
   
   // Regular Gauss-Seidel relaxation as alternative
   // Loop has race condition; parallelization is unsafe
@@ -190,8 +192,6 @@ void coarse_grid_solve_constrained(real_t *u, real_t *irhs, real_t *irho, idx_t 
   real_t  h = H_LEN_FRAC/(1<<MIN_DEPTH), eps = INF, temp;
   idx_t nn = NCOARSE_RELAX_STEPS;
 
-  initialize_random_array(u, (1<<MIN_DEPTH));
-
   while(nn--)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
@@ -214,8 +214,6 @@ void coarse_grid_solve(real_t *u, real_t *irhs, real_t *irho, idx_t n)
   real_t  h = H_LEN_FRAC/(1<<MIN_DEPTH), eps = INF, temp;
   idx_t nn = NCOARSE_RELAX_STEPS;
 
-  initialize_random_array(u, (1<<MIN_DEPTH));
-
   while(nn--)
   {
     relax(u, irhs, irho, 1<<MIN_DEPTH);
@@ -225,7 +223,7 @@ void coarse_grid_solve(real_t *u, real_t *irhs, real_t *irho, idx_t n)
   std::cout << "Coarse Grid Solution Max. Residual: " << eps << "\n" << std::flush;
 }
 
-void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse) 
+void restrict_fine2coarse(real_t *fine_field, real_t *coarse_field, idx_t n_coarse) 
 {
   // restrict scheme: 1*(1/8) + 6 * (1/16) + 12 * (1/32) + 8 * (1/64)
 
@@ -237,43 +235,43 @@ void restrict_fine2coarse(real_t *u_coarse, real_t *u_fine, idx_t n_coarse)
     fj = j*2;
     fk = k*2;
 
-    u_coarse[G_INDEX(i,j,k,n_coarse)] = 0.125 * u_fine[G_INDEX(fi,fj,fk,fn)]     
+    coarse_field[G_INDEX(i,j,k,n_coarse)] = 0.125 * fine_field[G_INDEX(fi,fj,fk,fn)]
       + 0.0625 * (
-        u_fine[G_INDEX(fi+1,fj,fk,fn)] +
-        u_fine[G_INDEX(fi,fj+1,fk,fn)] +
-        u_fine[G_INDEX(fi,fj,fk+1,fn)] +
-        u_fine[G_INDEX(fi-1,fj,fk,fn)] +
-        u_fine[G_INDEX(fi,fj-1,fk,fn)] +
-        u_fine[G_INDEX(fi,fj,fk-1,fn)]
+        fine_field[G_INDEX(fi+1,fj,fk,fn)] +
+        fine_field[G_INDEX(fi,fj+1,fk,fn)] +
+        fine_field[G_INDEX(fi,fj,fk+1,fn)] +
+        fine_field[G_INDEX(fi-1,fj,fk,fn)] +
+        fine_field[G_INDEX(fi,fj-1,fk,fn)] +
+        fine_field[G_INDEX(fi,fj,fk-1,fn)]
       )
       + 0.03125 * (
-        u_fine[G_INDEX(fi+1,fj+1,fk,fn)] +
-        u_fine[G_INDEX(fi+1,fj-1,fk,fn)] +
-        u_fine[G_INDEX(fi-1,fj+1,fk,fn)] +
-        u_fine[G_INDEX(fi-1,fj-1,fk,fn)] +
-        u_fine[G_INDEX(fi+1,fj,fk+1,fn)] +
-        u_fine[G_INDEX(fi+1,fj,fk-1,fn)] +
-        u_fine[G_INDEX(fi-1,fj,fk+1,fn)] +
-        u_fine[G_INDEX(fi-1,fj,fk-1,fn)] +
-        u_fine[G_INDEX(fi,fj+1,fk+1,fn)] +
-        u_fine[G_INDEX(fi,fj+1,fk-1,fn)] +
-        u_fine[G_INDEX(fi,fj-1,fk+1,fn)] +
-        u_fine[G_INDEX(fi,fj-1,fk-1,fn)] 
+        fine_field[G_INDEX(fi+1,fj+1,fk,fn)] +
+        fine_field[G_INDEX(fi+1,fj-1,fk,fn)] +
+        fine_field[G_INDEX(fi-1,fj+1,fk,fn)] +
+        fine_field[G_INDEX(fi-1,fj-1,fk,fn)] +
+        fine_field[G_INDEX(fi+1,fj,fk+1,fn)] +
+        fine_field[G_INDEX(fi+1,fj,fk-1,fn)] +
+        fine_field[G_INDEX(fi-1,fj,fk+1,fn)] +
+        fine_field[G_INDEX(fi-1,fj,fk-1,fn)] +
+        fine_field[G_INDEX(fi,fj+1,fk+1,fn)] +
+        fine_field[G_INDEX(fi,fj+1,fk-1,fn)] +
+        fine_field[G_INDEX(fi,fj-1,fk+1,fn)] +
+        fine_field[G_INDEX(fi,fj-1,fk-1,fn)] 
       )
       + 0.015625 * (
-        u_fine[G_INDEX(fi+1,fj+1,fk+1,fn)] +
-        u_fine[G_INDEX(fi+1,fj+1,fk-1,fn)] +
-        u_fine[G_INDEX(fi+1,fj-1,fk+1,fn)] +
-        u_fine[G_INDEX(fi-1,fj+1,fk+1,fn)] +
-        u_fine[G_INDEX(fi+1,fj-1,fk-1,fn)] +
-        u_fine[G_INDEX(fi-1,fj+1,fk-1,fn)] +
-        u_fine[G_INDEX(fi-1,fj-1,fk+1,fn)] +
-        u_fine[G_INDEX(fi-1,fj-1,fk-1,fn)]
+        fine_field[G_INDEX(fi+1,fj+1,fk+1,fn)] +
+        fine_field[G_INDEX(fi+1,fj+1,fk-1,fn)] +
+        fine_field[G_INDEX(fi+1,fj-1,fk+1,fn)] +
+        fine_field[G_INDEX(fi-1,fj+1,fk+1,fn)] +
+        fine_field[G_INDEX(fi+1,fj-1,fk-1,fn)] +
+        fine_field[G_INDEX(fi-1,fj+1,fk-1,fn)] +
+        fine_field[G_INDEX(fi-1,fj-1,fk+1,fn)] +
+        fine_field[G_INDEX(fi-1,fj-1,fk-1,fn)]
       );
   }
 }
 
-void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n) 
+void interpolate_coarse2fine(real_t *coarse_field, real_t *fine_field, idx_t fine_n) 
 {
   // TODO: document interpolation scheme
 
@@ -281,7 +279,7 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
   int coarse_n = fine_n/2;
   int fi, fj, fk, fn = fine_n;
 
-  zero_array(u_fine, PW3(fine_n));
+  zero_array(fine_field, PW3(fine_n));
 
   #pragma omp parallel for default(shared) private(i,j,k)
   LOOP3_N(i,j,k,coarse_n)
@@ -290,37 +288,37 @@ void interpolate_coarse2fine(real_t *u_fine, real_t *u_coarse, idx_t fine_n)
     fj = j*2;
     fk = k*2;
 
-    real_t cc = u_coarse[G_INDEX(i,j,k,coarse_n)];
-    u_fine[G_INDEX(fi,fj,fk,fine_n)] += cc;
+    real_t cc = coarse_field[G_INDEX(i,j,k,coarse_n)];
+    fine_field[G_INDEX(fi,fj,fk,fine_n)] += cc;
     
-    u_fine[G_INDEX(fi+1,fj,fk,fn)] += cc/2.0;
-    u_fine[G_INDEX(fi,fj+1,fk,fn)] += cc/2.0; 
-    u_fine[G_INDEX(fi,fj,fk+1,fn)] += cc/2.0;
-    u_fine[G_INDEX(fi-1,fj,fk,fn)] += cc/2.0; 
-    u_fine[G_INDEX(fi,fj-1,fk,fn)] += cc/2.0; 
-    u_fine[G_INDEX(fi,fj,fk-1,fn)] += cc/2.0;
+    fine_field[G_INDEX(fi+1,fj,fk,fn)] += cc/2.0;
+    fine_field[G_INDEX(fi,fj+1,fk,fn)] += cc/2.0; 
+    fine_field[G_INDEX(fi,fj,fk+1,fn)] += cc/2.0;
+    fine_field[G_INDEX(fi-1,fj,fk,fn)] += cc/2.0; 
+    fine_field[G_INDEX(fi,fj-1,fk,fn)] += cc/2.0; 
+    fine_field[G_INDEX(fi,fj,fk-1,fn)] += cc/2.0;
 
-    u_fine[G_INDEX(fi+1,fj+1,fk,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi+1,fj-1,fk,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi-1,fj+1,fk,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi-1,fj-1,fk,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi+1,fj,fk+1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi+1,fj,fk-1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi-1,fj,fk+1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi-1,fj,fk-1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi,fj+1,fk+1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi,fj+1,fk-1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi,fj-1,fk+1,fn)] += cc/4.0;
-    u_fine[G_INDEX(fi,fj-1,fk-1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi+1,fj+1,fk,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi+1,fj-1,fk,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi-1,fj+1,fk,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi-1,fj-1,fk,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi+1,fj,fk+1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi+1,fj,fk-1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi-1,fj,fk+1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi-1,fj,fk-1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi,fj+1,fk+1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi,fj+1,fk-1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi,fj-1,fk+1,fn)] += cc/4.0;
+    fine_field[G_INDEX(fi,fj-1,fk-1,fn)] += cc/4.0;
             
-    u_fine[G_INDEX(fi+1,fj+1,fk+1,fn)] += cc/8.0; 
-    u_fine[G_INDEX(fi+1,fj+1,fk-1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi+1,fj-1,fk+1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi-1,fj+1,fk+1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi+1,fj-1,fk-1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi-1,fj+1,fk-1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi-1,fj-1,fk+1,fn)] += cc/8.0;
-    u_fine[G_INDEX(fi-1,fj-1,fk-1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi+1,fj+1,fk+1,fn)] += cc/8.0; 
+    fine_field[G_INDEX(fi+1,fj+1,fk-1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi+1,fj-1,fk+1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi-1,fj+1,fk+1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi+1,fj-1,fk-1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi-1,fj+1,fk-1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi-1,fj-1,fk+1,fn)] += cc/8.0;
+    fine_field[G_INDEX(fi-1,fj-1,fk-1,fn)] += cc/8.0;
   }
 }
 
@@ -335,7 +333,7 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
   std::cout << "TOTAL_DEPTHS: " << TOTAL_DEPTHS << "\n";
 
   // iterators
-  idx_t depth, cycle, cycle_depth, nf;
+  idx_t depth, cycle, cycle_depth, n_fine, n_coarse;
   idx_t pre_relax_step, post_relax_step;
 
   idx_t n, depth_idx;
@@ -345,7 +343,7 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
 
   // define a heirarchy of references to grids
   real_t *irhs[TOTAL_DEPTHS], *itau[TOTAL_DEPTHS], *iu[TOTAL_DEPTHS],
-         *irho[TOTAL_DEPTHS], *itemp[TOTAL_DEPTHS], tr_err, res; 
+         *irho[TOTAL_DEPTHS], *idefecit[TOTAL_DEPTHS], tr_err, res; 
   
   // initialize arrays at different grid levels / "depths";
   for(depth = MIN_DEPTH; depth <= MAX_DEPTH; ++depth)
@@ -358,7 +356,7 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
     irhs[depth_idx] = new real_t[PW3(n)];
     iu[depth_idx] = new real_t[PW3(n)];
     itau[depth_idx] = new real_t[PW3(n)];
-    itemp[depth_idx] = new real_t[PW3(n)];
+    idefecit[depth_idx] = new real_t[PW3(n)];
   }
 
   // the "finest" grid is supplied to this function
@@ -366,15 +364,25 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
   memcpy(irhs[max_depth_idx], source, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
   memcpy(iu[max_depth_idx], psi, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
 
+
+
   // restrict rho and "rhs" from finer grids to coarser grids:
   std::cout << "Restricting solution to coarser grids...\n" << std::flush;
   for(depth = MAX_DEPTH-1; depth >= MIN_DEPTH; --depth)
   { // depth = finest;  depth > coarsest; 
     depth_idx = D_INDEX(depth);
-    n = PWROF2(depth);
-    restrict_fine2coarse(irho[depth_idx], irho[depth_idx+1], n);
-    restrict_fine2coarse(irhs[depth_idx], irhs[depth_idx+1], n);
+    n_coarse = PWROF2(depth);
+    restrict_fine2coarse(irho[depth_idx+1], irho[depth_idx], n_coarse);
+    restrict_fine2coarse(irhs[depth_idx+1], irhs[depth_idx], n_coarse);
+    restrict_fine2coarse(iu[depth_idx+1], iu[depth_idx], n_coarse);
   }
+
+  std::cout << "Max. initial residual on finest grid: "
+    << max_constraint_residual(iu[max_depth_idx], irho[max_depth_idx],
+      irhs[max_depth_idx], PWROF2(MAX_DEPTH)) << "\n";
+  std::cout << "Max. initial residual on coarsest grid: "
+    << max_constraint_residual(iu[min_depth_idx], irho[min_depth_idx],
+      irhs[min_depth_idx], PWROF2(MIN_DEPTH)) << "\n";
 
   // obtain a solution on the coarsest grid
   // Currently using multigrid without applying constraint of integral in speed up
@@ -385,7 +393,7 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
   // Perform V-cycles at increasing depths
   for (depth = MIN_DEPTH + 1; depth <= MAX_DEPTH; ++depth)
   {
-    std::cout << "\nPerforming V-cycle from depth " << MIN_DEPTH
+    std::cout << "\nPerforming V-cycles from depth " << MIN_DEPTH
               << " to depth " << depth << ".\n"
               << "-------------------------------------------\n\n"
               << std::flush;
@@ -393,75 +401,83 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
     n = PWROF2(depth);
     depth_idx = D_INDEX(depth);
 
-    interpolate_coarse2fine(iu[depth_idx], iu[depth_idx-1], n);
+    interpolate_coarse2fine(iu[depth_idx-1], iu[depth_idx], n);
 
     // Perform n_cycles V-cycles between MIN_DEPTH and depth
     for(cycle = 0; cycle < n_cycles; cycle++)
     {
+
       // perform fine->coarse steps of a V-cycle
       for(cycle_depth = depth; cycle_depth > MIN_DEPTH; --cycle_depth)
       {
         idx_t cycle_depth_idx = D_INDEX(cycle_depth);
-        nf = PWROF2(cycle_depth);
+        n_fine = PWROF2(cycle_depth);
+        n_coarse = PWROF2(cycle_depth-1);
 
         // perform pre-cycle relaxation
         for(pre_relax_step = 0; pre_relax_step < NPRE_RELAX_STEPS; pre_relax_step++)
         {
           real_t eps = relax(iu[cycle_depth_idx], irhs[cycle_depth_idx],
-            irho[cycle_depth_idx], nf);
+            irho[cycle_depth_idx], n_fine);
+
           if(eps < IT_EPS)
             break;
 
           // enforce volume constraint
           // real_t volume_constraint_shift = solve_volume_constraint(
-          //   iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], nf);
-          // shift_array_values(iu[cycle_depth_idx], volume_constraint_shift, nf);
+          //   iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], n_fine);
+          // shift_array_values(iu[cycle_depth_idx], volume_constraint_shift, n_fine);
         }
 
-        compute_constraint_residual(iu[cycle_depth_idx], irho[cycle_depth_idx], itemp[cycle_depth_idx], nf);
+        compute_constraint_deficit(iu[cycle_depth_idx], irho[cycle_depth_idx], idefecit[cycle_depth_idx], n_coarse);
 
-        nf /= 2;
-        restrict_fine2coarse(itemp[cycle_depth_idx-1], itemp[cycle_depth_idx], nf);
-        restrict_fine2coarse(iu[cycle_depth_idx-1], iu[cycle_depth_idx], nf);
-        compute_constraint_residual(iu[cycle_depth_idx-1], irho[cycle_depth_idx-1], itau[cycle_depth_idx-1], nf);
-        matrix_subtract(itau[cycle_depth_idx-1], itemp[cycle_depth_idx-1], itau[cycle_depth_idx-1], nf);
+        restrict_fine2coarse(idefecit[cycle_depth_idx], idefecit[cycle_depth_idx-1], n_coarse);
+        restrict_fine2coarse(iu[cycle_depth_idx], iu[cycle_depth_idx-1], n_coarse);
+
+        compute_constraint_deficit(iu[cycle_depth_idx-1], irho[cycle_depth_idx-1], itau[cycle_depth_idx-1], n_coarse);
+        matrix_subtract(itau[cycle_depth_idx-1], idefecit[cycle_depth_idx-1], itau[cycle_depth_idx-1], n_coarse);
         
         if(cycle_depth_idx == depth)
-          tr_err = ALPHA * norm(itau[cycle_depth_idx-1], nf);
+          tr_err = ALPHA * norm(itau[cycle_depth_idx-1], n_coarse);
 
-        restrict_fine2coarse(irhs[cycle_depth_idx-1], irhs[cycle_depth_idx], nf);
-        matrix_add(irhs[cycle_depth_idx-1], itau[cycle_depth_idx-1], irhs[cycle_depth_idx-1], nf);
-      } // end V-cycle
+        restrict_fine2coarse(irhs[cycle_depth_idx], irhs[cycle_depth_idx-1], n_coarse);
+        matrix_add(irhs[cycle_depth_idx-1], itau[cycle_depth_idx-1], irhs[cycle_depth_idx-1], n_coarse);
+      } // end fine->coarse V-cycle
 
       // determine solution on coarse grid given truncation error source
       coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
         irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
 
       // perform coarse->fine steps in V-cycle
-      nf = 1<<MIN_DEPTH;
       for(cycle_depth = MIN_DEPTH + 1; cycle_depth <= depth; cycle_depth++)
       {
+        n_fine = PWROF2(cycle_depth);
+        n_coarse = PWROF2(cycle_depth-1);
+
         idx_t cycle_depth_idx = D_INDEX(cycle_depth);
-        restrict_fine2coarse(itemp[cycle_depth_idx - 1], iu[cycle_depth_idx], nf);
-        matrix_subtract(iu[cycle_depth_idx - 1], itemp[cycle_depth_idx-1], itemp[cycle_depth_idx-1], nf);
-        nf *= 2;
-        interpolate_coarse2fine(itau[cycle_depth_idx], itemp[cycle_depth_idx-1], nf);
+        restrict_fine2coarse(iu[cycle_depth_idx], idefecit[cycle_depth_idx-1], n_coarse);
+        matrix_subtract(iu[cycle_depth_idx - 1], idefecit[cycle_depth_idx-1], idefecit[cycle_depth_idx-1], n_coarse);
+
+        interpolate_coarse2fine(idefecit[cycle_depth_idx-1], itau[cycle_depth_idx], n_fine);
         
-        matrix_add(iu[cycle_depth_idx], itau[cycle_depth_idx], iu[cycle_depth_idx], nf);
+        matrix_add(iu[cycle_depth_idx], itau[cycle_depth_idx], iu[cycle_depth_idx], n_fine);
         for(post_relax_step = 0; post_relax_step < NPOST_RELAX_STEPS; post_relax_step++)
         {
-          if(relax(iu[cycle_depth_idx], irhs[cycle_depth_idx], irho[cycle_depth_idx], nf) < IT_EPS)
+          if(relax(iu[cycle_depth_idx], irhs[cycle_depth_idx], irho[cycle_depth_idx], n_fine) < IT_EPS)
             break;
-          //shift_array_values(iu[cycle_depth_idx], solve_volume_constraint(iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], nf), nf);
+          // shift_array_values(iu[cycle_depth_idx],
+          //   solve_volume_constraint(iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], n_fine), n_fine);
         }
       }
 
       // Check residual on finest grid
-      compute_constraint_residual(iu[depth_idx], irho[depth_idx], itemp[depth_idx], nf);
-      matrix_subtract(itemp[depth_idx], irhs[depth_idx], itemp[depth_idx], nf);
-      res = norm(itemp[depth_idx], nf);
+      compute_constraint_deficit(iu[depth_idx], irho[depth_idx], idefecit[depth_idx], n);
+      matrix_subtract(idefecit[depth_idx], irhs[depth_idx], idefecit[depth_idx], n);
+      res = norm(idefecit[depth_idx], n);
       std::cout << "Grid at depth " << depth << " max residual is: ";
-      std::cout << std::fixed << max_constraint_residual(iu[depth_idx], irho[depth_idx], irhs[depth_idx], 1<<depth)<<"\n\n";
+      std::cout << std::fixed
+        << max_constraint_residual(iu[depth_idx], irho[depth_idx], irhs[depth_idx], 1<<depth)
+        << "\n\n";
       
       if(res < tr_err) break;
     } // end loop for V-cycles
@@ -480,10 +496,186 @@ void fas_multigrid(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, rea
     delete [] iu[depth_idx];
     delete [] irho[depth_idx];
     delete [] irhs[depth_idx];
-    delete [] itemp[depth_idx];
+    delete [] idefecit[depth_idx];
     delete [] itau[depth_idx];
   }
 }
+
+void fas_WCycle(real_t *psi, real_t *source, real_t *rho, idx_t n_cycles, real_t eps)
+{
+  // Solve non-linear constraint equation \nabla^2 \psi = -2pi \rho \psi 
+  // using Full multigrid in FAS scheme
+  // `source` is the right hand side of Numerical Recipes 2nd ed., eq. 19.6.23.
+
+  std::cout << "MAX_DEPTH: " << MAX_DEPTH << " | ";
+  std::cout << "MIN_DEPTH: " << MIN_DEPTH << " | ";
+  std::cout << "TOTAL_DEPTHS: " << TOTAL_DEPTHS << "\n";
+
+  // iterators
+  idx_t depth, cycle, cycle_depth, n_fine, n_coarse;
+  idx_t pre_relax_step, post_relax_step;
+
+  idx_t n, depth_idx;
+  idx_t max_depth_idx, min_depth_idx;
+  max_depth_idx = D_INDEX(MAX_DEPTH);
+  min_depth_idx = D_INDEX(MIN_DEPTH);
+
+  // define a heirarchy of references to grids
+  real_t *irhs[TOTAL_DEPTHS], *itau[TOTAL_DEPTHS], *iu[TOTAL_DEPTHS],
+         *irho[TOTAL_DEPTHS], *idefecit[TOTAL_DEPTHS], tr_err, res; 
+  
+  // initialize arrays at different grid levels / "depths";
+  for(depth = MIN_DEPTH; depth <= MAX_DEPTH; ++depth)
+  {
+    depth_idx = D_INDEX(depth);
+    std::cout << "Allocating depth: " << depth << " with index: " << depth_idx << "\n";
+    n = PWROF2(depth);
+
+    irho[depth_idx] = new real_t[PW3(n)];
+    irhs[depth_idx] = new real_t[PW3(n)];
+    iu[depth_idx] = new real_t[PW3(n)];
+    itau[depth_idx] = new real_t[PW3(n)];
+    idefecit[depth_idx] = new real_t[PW3(n)];
+  }
+
+  // the "finest" grid is supplied to this function
+  memcpy(irho[max_depth_idx], rho, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+  memcpy(irhs[max_depth_idx], source, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+  memcpy(iu[max_depth_idx], psi, sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+
+  // restrict rho and "rhs" from finer grids to coarser grids:
+  std::cout << "Restricting solution to coarser grids...\n" << std::flush;
+  for(depth = MAX_DEPTH-1; depth >= MIN_DEPTH; --depth)
+  { // depth = finest;  depth > coarsest;
+    depth_idx = D_INDEX(depth);
+    n_coarse = PWROF2(depth);
+    restrict_fine2coarse(irho[depth_idx+1], irho[depth_idx], n_coarse);
+    restrict_fine2coarse(irhs[depth_idx+1], irhs[depth_idx], n_coarse);
+    restrict_fine2coarse(iu[depth_idx+1], iu[depth_idx], n_coarse);
+  }
+
+  std::cout << "Max. initial residual on finest grid: "
+    << max_constraint_residual(iu[max_depth_idx], irho[max_depth_idx],
+      irhs[max_depth_idx], PWROF2(MAX_DEPTH)) << "\n";
+  std::cout << "Max. initial residual on coarsest grid: "
+    << max_constraint_residual(iu[min_depth_idx], irho[min_depth_idx],
+      irhs[min_depth_idx], PWROF2(MIN_DEPTH)) << "\n";
+
+  // obtain a solution on the coarsest grid
+  // Currently using multigrid without applying constraint of integral in speed up
+  std::cout << "Obtaining coarse grid solution...\n" << std::flush;
+  coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
+    irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
+
+  // Perform V-cycles at increasing depths
+  for (depth = MAX_DEPTH; depth <= MAX_DEPTH; ++depth)
+  {
+    std::cout << "\nPerforming V-cycles from depth " << MIN_DEPTH
+              << " to depth " << depth << ".\n"
+              << "-------------------------------------------\n\n"
+              << std::flush;
+
+    n = PWROF2(depth);
+    depth_idx = D_INDEX(depth);
+
+    // Perform n_cycles V-cycles between MIN_DEPTH and depth
+    for(cycle = 0; cycle < n_cycles; cycle++)
+    {
+
+      // perform fine->coarse steps of a V-cycle
+      for(cycle_depth = depth; cycle_depth > MIN_DEPTH; --cycle_depth)
+      {
+        idx_t cycle_depth_idx = D_INDEX(cycle_depth);
+        n_fine = PWROF2(cycle_depth);
+        n_coarse = PWROF2(cycle_depth-1);
+
+        // perform pre-cycle relaxation
+        for(pre_relax_step = 0; pre_relax_step < NPRE_RELAX_STEPS; pre_relax_step++)
+        {
+          real_t eps = relax(iu[cycle_depth_idx], irhs[cycle_depth_idx],
+            irho[cycle_depth_idx], n_fine);
+
+          if(eps < IT_EPS)
+            break;
+
+          // enforce volume constraint
+          // real_t volume_constraint_shift = solve_volume_constraint(
+          //   iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], n_fine);
+          // shift_array_values(iu[cycle_depth_idx], volume_constraint_shift, n_fine);
+        }
+
+        compute_constraint_deficit(iu[cycle_depth_idx], irho[cycle_depth_idx], idefecit[cycle_depth_idx], n_coarse);
+
+        restrict_fine2coarse(idefecit[cycle_depth_idx], idefecit[cycle_depth_idx-1], n_coarse);
+        restrict_fine2coarse(iu[cycle_depth_idx], iu[cycle_depth_idx-1], n_coarse);
+
+        compute_constraint_deficit(iu[cycle_depth_idx-1], irho[cycle_depth_idx-1], itau[cycle_depth_idx-1], n_coarse);
+        matrix_subtract(itau[cycle_depth_idx-1], idefecit[cycle_depth_idx-1], itau[cycle_depth_idx-1], n_coarse);
+        
+        if(cycle_depth_idx == depth)
+          tr_err = ALPHA * norm(itau[cycle_depth_idx-1], n_coarse);
+
+        restrict_fine2coarse(irhs[cycle_depth_idx], irhs[cycle_depth_idx-1], n_coarse);
+        matrix_add(irhs[cycle_depth_idx-1], itau[cycle_depth_idx-1], irhs[cycle_depth_idx-1], n_coarse);
+      } // end fine->coarse V-cycle
+
+      // determine solution on coarse grid given truncation error source
+      coarse_grid_solve(iu[min_depth_idx], irhs[min_depth_idx],
+        irho[min_depth_idx], PW3(PWROF2(MIN_DEPTH)));
+
+      // perform coarse->fine steps in V-cycle
+      for(cycle_depth = MIN_DEPTH + 1; cycle_depth <= depth; cycle_depth++)
+      {
+        n_fine = PWROF2(cycle_depth);
+        n_coarse = PWROF2(cycle_depth-1);
+
+        idx_t cycle_depth_idx = D_INDEX(cycle_depth);
+        restrict_fine2coarse(iu[cycle_depth_idx], idefecit[cycle_depth_idx-1], n_coarse);
+        matrix_subtract(iu[cycle_depth_idx - 1], idefecit[cycle_depth_idx-1], idefecit[cycle_depth_idx-1], n_coarse);
+
+        interpolate_coarse2fine(idefecit[cycle_depth_idx-1], itau[cycle_depth_idx], n_fine);
+        
+        matrix_add(iu[cycle_depth_idx], itau[cycle_depth_idx], iu[cycle_depth_idx], n_fine);
+        for(post_relax_step = 0; post_relax_step < NPOST_RELAX_STEPS; post_relax_step++)
+        {
+          if(relax(iu[cycle_depth_idx], irhs[cycle_depth_idx], irho[cycle_depth_idx], n_fine) < IT_EPS)
+            break;
+          // shift_array_values(iu[cycle_depth_idx],
+          //   solve_volume_constraint(iu[cycle_depth_idx], irho[cycle_depth_idx], irhs[cycle_depth_idx], n_fine), n_fine);
+        }
+      }
+
+      // Check residual on finest grid
+      compute_constraint_deficit(iu[depth_idx], irho[depth_idx], idefecit[depth_idx], n);
+      matrix_subtract(idefecit[depth_idx], irhs[depth_idx], idefecit[depth_idx], n);
+      res = norm(idefecit[depth_idx], n);
+      std::cout << "Grid at depth " << depth << " max residual is: ";
+      std::cout << std::fixed
+        << max_constraint_residual(iu[depth_idx], irho[depth_idx], irhs[depth_idx], 1<<depth)
+        << "\n\n";
+      
+      if(res < tr_err) break;
+    } // end loop for V-cycles
+  }
+  
+  std::cout << "Residual on coarse grid\n" << std::fixed
+            << max_constraint_residual(iu[D_INDEX(MIN_DEPTH)],
+                irho[D_INDEX(MIN_DEPTH)], irhs[D_INDEX(MIN_DEPTH)], PWROF2(MIN_DEPTH))
+            << "\n";
+
+  memcpy(psi, iu[max_depth_idx], sizeof(real_t)*PW3(PWROF2(MAX_DEPTH)));
+
+  for(depth = MIN_DEPTH; depth <= MAX_DEPTH; ++depth)
+  {
+    depth_idx = D_INDEX(depth);
+    delete [] iu[depth_idx];
+    delete [] irho[depth_idx];
+    delete [] irhs[depth_idx];
+    delete [] idefecit[depth_idx];
+    delete [] itau[depth_idx];
+  }
+}
+
 
 int main(int argc, char **argv)
 {  
@@ -494,7 +686,9 @@ int main(int argc, char **argv)
   real_t h = H_LEN_FRAC/(real_t)(N);
   
   std::cout.precision(15);
-  omp_set_num_threads(4);
+  #ifdef USE_OPENMP
+    omp_set_num_threads(4);
+  #endif
   srand(129);
 
   psi_solution = new real_t[PW3(N)];
@@ -523,9 +717,12 @@ int main(int argc, char **argv)
     idx_t p = G_INDEX(i, j, k, N);
     // generating rho according to standard solution
     rho[p] = (-LAP(psi_trial, i, j, k, N, h) + source[p]) / PW5(psi_trial[p]);
+
+    psi_solution[p] = psi_trial[p]/* + ((real_t) rand())/RAND_MAX/1000.0*/;
   }
 
-  fas_multigrid(psi_solution, source, rho, 3, 1e-7);
+  //fas_multigrid(psi_solution, source, rho, 3, 1e-7);
+  fas_WCycle(psi_solution, source, rho, 3, 1e-7);
 
   freopen("rho.txt","w", stdout);
   print_mathematica_array(rho, (N));

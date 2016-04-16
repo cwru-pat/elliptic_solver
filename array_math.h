@@ -83,7 +83,7 @@ void initialize_random_array(real_t *array, idx_t n)
   int i, j, k;
   LOOP3_N(i,j,k,n)
   {
-    array[G_INDEX(i, j, k, n)] = 1.0 + (real_t) rand()/RAND_MAX/1000;
+    array[G_INDEX(i, j, k, n)] = 1.0 + (real_t) rand()/RAND_MAX/100;
   }
 }
 
