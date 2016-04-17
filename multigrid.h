@@ -84,10 +84,27 @@ class FASMultigrid
      * @param      grid    grid (array) to initialize
      * @param[in]  points  # points in array / on grid
      */
-    void _zero_grid(fas_grid_t grid, IDX_T points)
+    void _zeroGrid(fas_grid_t grid, IDX_T points)
     {
       for(IDX_T i=0; i < points; i++)
         grid[i] = 0;
+    }
+
+    /** TODO: doc */
+    REAL_T _totalGrid(fas_grid_t grid, IDX_T points)
+    {
+      REAL_T total = 0;
+      for(IDX_T i=0; i < points; i++)
+        total += grid[i];
+      return total;
+    }
+
+    /** TODO: doc */
+    void _shiftGridVals(fas_grid_t grid, REAL_T shift, IDX_T points)
+    {
+      #pragma omp parallel for
+      for(IDX_T i=0; i < points; i++)
+        grid[i] += shift;
     }
 
     /**
@@ -214,7 +231,7 @@ class FASMultigrid
       IDX_T i, j, k;
       IDX_T fi, fj, fk;
 
-      _zero_grid(fine_grid, _Pwr3(n_fine));
+      _zeroGrid(fine_grid, _Pwr3(n_fine));
 
       #pragma omp parallel for default(shared) private(i,j,k)
       FAS_LOOP3_N(i,j,k,n_coarse)
@@ -300,6 +317,77 @@ class FASMultigrid
     }
 
     /**
+     * @brief Find value of A that gives a root of the function:
+     * f(A) = \integral (\rho * (\psi + A)^5 - coarse_src  ) d V
+     * and offset phi by this
+     *
+     * @param depth depth to compute at
+     * @return "A"
+     */
+    void _shiftConstrainedFieldMonopole(IDX_T depth)
+    {
+      REAL_T eps = 0.0, shift = 0.0;
+      REAL_T num, den;
+
+      do
+      {
+        num = _monopoleConstraintTotal(depth, shift);
+        den = _monopoleConstraintDerivativeTotal(depth, shift);
+
+        shift -= num/den;
+        if( fabs(fabs(num/den) - eps) < 1e-9 )
+          break;
+
+        eps = fabs(num/den);
+
+      } while(1);
+
+      IDX_T n = _2toPwr(depth);
+      IDX_T depth_idx = _dIdx(depth);
+      _shiftGridVals(psi_h[depth_idx], shift, _Pwr3(n));
+    }
+
+    REAL_T _monopoleConstraintTotal(IDX_T depth, REAL_T shift)
+    {
+      IDX_T i, j, k;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+
+      fas_grid_t const psi = psi_h[depth_idx];
+      fas_grid_t const rho = rho_h[depth_idx];
+      fas_grid_t const coarse_src = coarse_src_h[depth_idx];
+
+      REAL_T total = 0.0;
+      FAS_LOOP3_N(i,j,k,n)
+      {
+        IDX_T idx = _gIdx(i, j, k, n);
+        total += rho[idx] * std::pow(psi[idx] + shift, 5.0) - coarse_src[idx];
+      }
+
+      return total;
+    }
+
+    REAL_T _monopoleConstraintDerivativeTotal(IDX_T depth, REAL_T shift)
+    {
+      IDX_T i, j, k;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+
+      fas_grid_t const psi = psi_h[depth_idx];
+      fas_grid_t const rho = rho_h[depth_idx];
+      fas_grid_t const coarse_src = coarse_src_h[depth_idx];
+
+      REAL_T total = 0.0;
+      FAS_LOOP3_N(i,j,k,n)
+      {
+        IDX_T idx = _gIdx(i, j, k, n);
+        total += rho[idx] * std::pow(psi[idx] + shift, 4.0);
+      }
+
+      return 5.0*total;
+    }
+
+    /**
      * @brief      Computes residual, stores result in "tmp" heirarchy
      *
      * @param[in]  depth  depth to compute residual at
@@ -372,9 +460,6 @@ class FASMultigrid
       // restrict approximate solution on coarse grid
       _restrictFine2coarse(psi_h, fine_depth);
 
-// _evaluateEllipticEquation(tmp_h, fine_depth);
-// std::cout << "operator (fine) "; printStrip(tmp_h, fine_depth);
-
       // compute residual on fine grid; intermediately store the result
       // in the tmp grid
       _computeResidual(tmp_h, fine_depth);
@@ -382,10 +467,6 @@ class FASMultigrid
       _restrictFine2coarse(tmp_h, fine_depth);
       // compute elliptic operator on coarse grid; store in source
       _evaluateEllipticEquation(coarse_src_h, fine_depth-1);
-
-
-// std::cout << "residual (fine) "; printStrip(tmp_h, fine_depth);
-// std::cout << "operator (coarse) "; printStrip(coarse_src_h, fine_depth-1);
 
       // add in restricted residual to coarse source;
       // coarse source is then set.
@@ -506,6 +587,9 @@ class FASMultigrid
       // run some # iterations
       for(s=0; s<iterations; ++s)
       {
+        if(s==iterations/2)
+          _shiftConstrainedFieldMonopole(depth);
+
         // Note that this method has an implicit race condition
         #pragma omp parallel for default(shared) private(i,j,k)
         FAS_LOOP3_N(i,j,k,n)
@@ -569,10 +653,10 @@ class FASMultigrid
         coarse_src_h[depth_idx] = new REAL_T[points];
         tmp_h[depth_idx] = new REAL_T[points];
 
-        _zero_grid(psi_h[depth_idx], points);
-        _zero_grid(rho_h[depth_idx], points);
-        _zero_grid(coarse_src_h[depth_idx], points);
-        _zero_grid(tmp_h[depth_idx], points);
+        _zeroGrid(psi_h[depth_idx], points);
+        _zeroGrid(rho_h[depth_idx], points);
+        _zeroGrid(coarse_src_h[depth_idx], points);
+        _zeroGrid(tmp_h[depth_idx], points);
       }
     }; // constructor
  
@@ -633,7 +717,7 @@ class FASMultigrid
         // relax "true" solution in psi_h
         _relaxSolution_GaussSeidel(coarse_depth, relax_iters);
 
-        std::cout << " Working on upward stroke at depth " << coarse_depth
+        std::cout << "    Working on upward stroke at depth " << coarse_depth
                   << "; residual after solving is: "
                   << _getMaxResidual(coarse_depth) << ".\n" << std::flush;
 
@@ -647,8 +731,9 @@ class FASMultigrid
 
       // final relaxation
       _relaxSolution_GaussSeidel(max_depth, relax_iters);
-      std::cout << "  Final residual on fine grid is: "
+      std::cout << "  Final max. residual on fine grid is: "
                 << _getMaxResidual(max_depth) << ".\n" << std::flush;
+      // std::cout << "  psi (fine) slice is: "; printStrip(psi_h, max_depth);
     }
 
     void VCycles(IDX_T num_cycles)
@@ -657,6 +742,9 @@ class FASMultigrid
       {
         VCycle();
       }
+      _relaxSolution_GaussSeidel(max_depth, 5000);
+      std::cout << "  Final solution residual is: "
+                << _getMaxResidual(max_depth) << ".\n" << std::flush;
     }
 
 
@@ -697,7 +785,7 @@ class FASMultigrid
       {
         IDX_T idx = _gIdx(i,j,k,n);
         // add a random component ("worse" guess)
-        psi[idx] = psi[idx] + ((REAL_T) std::rand())/RAND_MAX/1000.0;
+        psi[idx] = psi[idx] + ( ((REAL_T) std::rand())/RAND_MAX - 0.5)/10.0;
       }
 
       initializeFinePsi(psi);

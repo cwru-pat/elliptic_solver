@@ -24,7 +24,7 @@ int main(int argc, char **argv)
   std::cout << "  done.\n";
 
   std::cout << "Performing V-Cycles...\n";
-  multigrid.VCycles(3);
+  multigrid.VCycles(10);
   std::cout << "  done.\n";
 
   exit(EXIT_SUCCESS);
