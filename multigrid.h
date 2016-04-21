@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iostream>
 #include <cmath>
+#include <cstdio>
 
 #define FAS_LOOP3_N(i, j, k, n) \
   for(i=0; i<n; ++i) \
@@ -42,8 +43,13 @@ class FASMultigrid
                     coarse_src_h, // multigrid source term
                     psi_h, // field seeking a solution for
                     appx_psi_h, // field containing an approximate solution
-                    rho_h; // matter source in elliptic pde
-
+                    rho_h, // matter source in elliptic pde
+                    damping_tmp_h, // storing _lap (u) - f, using for calculate F(u + \lambda v)
+                    lap_v_h, // storing _lap(v), using for caculate F(u + \lambda v)
+                    damping_v_h, //storing v, using for update u through u_{n+1} = u{n} + v in interation
+                    jac_rhs_h, //stroing - F(u) which is rhs of Jacob Linear function
+                    jac_resid_h; // the residue of corresponding Jacob Linear euqation
+					
     IDX_T max_depth, max_depth_idx;
     IDX_T min_depth, min_depth_idx;
     IDX_T total_depths;
@@ -606,8 +612,8 @@ class FASMultigrid
           // information about current residual
           #pragma omp critical
           {
-           if(current_residual > max_residual)
-             max_residual = current_residual;
+           if( fabs(current_residual) > max_residual )
+             max_residual = fabs(current_residual);
           }
         }
         // make sure we are still converging using this method...
@@ -615,7 +621,227 @@ class FASMultigrid
         prev_max_residual = max_residual;
       }
     }
+	
+	REAL_T _getLambda(IDX_T depth, REAL_T norm)
+    {
+		//linearly inumerate corresponding damping parameter \lambda
+        IDX_T i, j, k, s;
+        IDX_T depth_idx = _dIdx(depth);
+        IDX_T n = _2toPwr(depth);
+        REAL_T lambda = 0.0, temp, sum = 0.0;
+        fas_grid_t const damping_tmp = damping_tmp_h[depth_idx];
+        fas_grid_t const lap_v = lap_v_h[depth_idx];
+		fas_grid_t const damping_v = damping_v_h[depth_idx];
+		fas_grid_t const rho = rho_h[depth_idx];
+		fas_grid_t const psi = psi_h[depth_idx];
+		
+        for( s = 0; s < 100; s++)
+        {
+            lambda = 1.0 - (REAL_T)s * 0.01; //shoule always start with \lambda = 1
+            sum = 0.0;
+            FAS_LOOP3_N(i,j,k,n)
+            {
+                IDX_T idx = _gIdx(i, j, k, n);
+                temp = damping_tmp[idx] + lambda * lap_v[idx] 
+                       + rho[idx] * std::pow(psi[idx] + lambda * damping_v[idx], 5.0);
+                sum += temp * temp;
+            }
+            if(sum <= norm)  // when | F(u + \lambda v) | < | F(u) | stop
+                return lambda;
+        }
+        return lambda;
+    }
+	
+	REAL_T _dampingConstraintTotal(IDX_T depth, REAL_T shift)
+    {
+		//calculating total  of Jacob equation after shift
+      IDX_T i, j, k;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+	  fas_grid_t const rho = rho_h[depth_idx];
+	  fas_grid_t const psi = psi_h[depth_idx];
+	  fas_grid_t const damping_v = damping_v_h[depth_idx];
+	  fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
 
+      REAL_T total = 0.0;
+      FAS_LOOP3_N(i,j,k,n)
+      {
+        IDX_T idx = _gIdx(i, j, k, n);
+        total += 5.0 * rho[idx] * std::pow(psi[idx] , 4.0)
+                *(damping_v[idx] + shift)
+                - jac_rhs[idx];
+      }
+
+      return total;
+    }
+	
+	REAL_T _dampingConstraintDerivativeTotal(IDX_T depth, REAL_T shift)
+    {
+      IDX_T i, j, k;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+	  fas_grid_t const rho = rho_h[depth_idx];
+	  fas_grid_t const psi = psi_h[depth_idx];
+
+
+      REAL_T total = 0.0;
+      FAS_LOOP3_N(i,j,k,n)
+      {
+        IDX_T idx = _gIdx(i, j, k, n);
+        total += 5.0 * rho[idx] * std::pow(psi[idx] , 4.0);
+      }
+
+      return total;
+    }
+	
+	void _shiftConstrainedDamping(IDX_T depth) 
+    {
+		
+	  //shift the Jacob equation to satisy constraint, shometime does not helpful
+      REAL_T eps = 0.0, shift = 0.0;
+      REAL_T num, den, cnt=0;
+	  
+	  num = _dampingConstraintTotal(depth, 0.0);
+	  den = _dampingConstraintDerivativeTotal(depth, 0.0);
+      shift = -num / den;
+	  //std::cout<<shift<<"\n";
+      IDX_T n = _2toPwr(depth);
+      IDX_T depth_idx = _dIdx(depth);
+      _shiftGridVals(damping_v_h[depth_idx], shift, _Pwr3(n));
+    }
+	
+	void jac_relax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
+    {
+		//relax Jocob equation, currently without using constrain to speedup, so will work very slow
+		// C and p set the convergent speed of interation
+        IDX_T i, j, k, s;
+        IDX_T depth_idx = _dIdx(depth);
+        IDX_T n = _2toPwr(depth), cnt = 0;
+        REAL_T   norm_r = 1e100, dx = grid_length/n;
+	    fas_grid_t const rho = rho_h[depth_idx];
+	    fas_grid_t const psi = psi_h[depth_idx];
+	    fas_grid_t const damping_v = damping_v_h[depth_idx];
+	    fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
+        fas_grid_t const coarse_src = coarse_src_h[depth_idx];
+		fas_grid_t const jac_resid = jac_resid_h[depth_idx];
+		FAS_LOOP3_N(i, j, k, n)
+		{
+			damping_v[_gIdx(i,j,k,n)] = 0.0;
+		}
+		
+        while( norm_r >= std::min(pow(norm, (REAL_T)(p+1)) * C, norm)) 
+        {
+			
+			//relax until the convergent condition got satisfy 
+            norm_r = 0.0;
+            FAS_LOOP3_N(i,j,k,n)
+            {
+                IDX_T idx = _gIdx(i, j, k, n);
+                damping_v[idx] = (damping_v[_gIdx(i+1, j, k, n)] + damping_v[_gIdx(i-1, j, k, n)] +
+											damping_v[_gIdx(i, j+1, k, n)] + damping_v[_gIdx(i, j-1, k, n)] +
+											damping_v[_gIdx(i, j, k+1, n)] + damping_v[_gIdx(i, j, k-1, n)]
+											- jac_rhs[idx] * dx *dx) /
+											( 6.0 - 5.0*rho[idx]*std::pow(psi[idx], 4.0) *dx *dx);
+				/*damping_v[depth_idx][idx]  -= (_laplacian(damping_v[depth_idx], i, j, k, n) 
+												+ 5.0*rho_h[depth_idx][idx]*std::pow(psi_h[depth_idx][idx], 4.0) * damping_v[depth_idx][idx] 
+												- jac_rhs[depth_idx][idx])/(-6.0/ dx/dx + 5.0*rho_h[depth_idx][idx]*std::pow(psi_h[depth_idx][idx], 4.0));*/
+				//std::cout<<damping_v[depth_idx][idx]<<"\n";
+            }
+            
+            FAS_LOOP3_N(i,j,k,n)
+            {
+				IDX_T idx = _gIdx(i, j, k, n);
+                jac_resid[idx] = _laplacian(damping_v, i, j, k, n) 
+											+ 5.0*rho[idx]*std::pow(psi[idx], 4.0) * damping_v[idx]
+											- jac_rhs[idx];
+				
+                norm_r += jac_resid[idx] * jac_resid[idx];
+            }
+			
+            //_shiftConstrainedDamping(depth); 
+			
+			cnt++;
+			//if(cnt == 2) return 0;
+			//if(cnt == 200) exit(0);
+			//std::cout<<norm_r<<"\n";
+        }
+		
+    }
+	
+	void _relaxSolution_GaussSeidel_damp(IDX_T depth, IDX_T iterations)
+    {
+      // relax psi using the inexact Newton iteration
+	  
+      IDX_T i, j, k, s;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+      REAL_T dx = grid_length/n, temp, lambda, norm;
+
+      fas_grid_t const rho = rho_h[depth_idx];
+	  fas_grid_t const psi = psi_h[depth_idx];
+	  fas_grid_t const damping_v = damping_v_h[depth_idx];
+	  fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
+      fas_grid_t const coarse_src = coarse_src_h[depth_idx];
+	  fas_grid_t const damping_tmp = damping_tmp_h[depth_idx];
+	  fas_grid_t const lap_v = lap_v_h[depth_idx];
+      
+	  
+      // run some # iterations
+      
+      for(s=0; s<iterations; ++s)
+      {
+        //#pragma omp parallel for default(shared) private(i,j,k)
+        norm = 0.0;
+        FAS_LOOP3_N(i,j,k,n)
+        {
+          IDX_T idx = _gIdx(i, j, k, n);
+
+          temp  =  _laplacian(psi, i, j, k, n)
+            + rho[idx]*std::pow(psi[idx], 5.0) - coarse_src[idx];
+          norm += temp * temp;
+          damping_tmp[idx] = _laplacian(psi, i, j, k, n) - coarse_src[idx];
+            
+          // information about current residual
+          //#pragma omp critical
+         
+        }
+        FAS_LOOP3_N(i,j,k,n)
+        {
+            IDX_T idx = _gIdx(i, j, k, n);
+            jac_rhs[idx] = -_evaluateEllipticEquationPt(depth, i, j, k) + coarse_src[idx];  
+			//std::cout<<jac_rhs[depth_idx][idx] <<"\n";
+                                        
+        }
+		//printStrip(jac_rhs, depth);
+		//std::cout<<norm<<"\n";
+        jac_relax(depth, norm, 1, 0);
+		//printStrip(jac_rhs, depth);
+        FAS_LOOP3_N(i,j,k,n)
+        {
+            IDX_T idx = _gIdx(i,j,k,n);
+            lap_v[idx] = _laplacian(damping_v, i, j, k, n);
+        }
+        
+        lambda = _getLambda(depth, norm);
+        //lambda = 1.0;
+        //std::cout<<lambda<<"\n";
+        FAS_LOOP3_N(i,j,k,n)
+        {
+            IDX_T idx = _gIdx(i, j, k, n);
+
+          // Gauss-Seidel step for equation of interest
+          
+            psi[idx] += damping_v[idx] * lambda;
+        }
+        
+        temp = _getMaxResidual(max_depth);
+        std::cout<<temp<<"\n";
+		if(temp < 1e-5) //set presision
+			break;
+        // make sure we are still converging using this method...
+        
+      }
+    }
   public:
 
     /**
@@ -641,7 +867,14 @@ class FASMultigrid
       rho_h = new fas_grid_t[total_depths];
       coarse_src_h = new fas_grid_t[total_depths];
       tmp_h = new fas_grid_t[total_depths];
+	  
+	    damping_tmp_h = new fas_grid_t[total_depths];
+		lap_v_h = new fas_grid_t[total_depths];
+		damping_v_h = new fas_grid_t[total_depths];
 
+		jac_resid_h = new fas_grid_t[total_depths];
+		jac_rhs_h = new fas_grid_t[total_depths];
+	  
       for(IDX_T depth = min_depth; depth <= max_depth; ++depth)
       {
         IDX_T depth_idx = _dIdx(depth);
@@ -652,11 +885,22 @@ class FASMultigrid
         rho_h[depth_idx] = new REAL_T[points];
         coarse_src_h[depth_idx] = new REAL_T[points];
         tmp_h[depth_idx] = new REAL_T[points];
-
+		
+		damping_tmp_h[depth_idx] = new REAL_T[points];
+		lap_v_h[depth_idx] = new REAL_T[points];
+		damping_v_h[depth_idx] = new REAL_T[points];
+		jac_resid_h[depth_idx] = new REAL_T[points];
+		jac_rhs_h[depth_idx] = new REAL_T[points];
+		
         _zeroGrid(psi_h[depth_idx], points);
         _zeroGrid(rho_h[depth_idx], points);
         _zeroGrid(coarse_src_h[depth_idx], points);
         _zeroGrid(tmp_h[depth_idx], points);
+		_zeroGrid(damping_tmp_h[depth_idx], points);
+		_zeroGrid(lap_v_h[depth_idx], points);
+		_zeroGrid(damping_v_h[depth_idx], points);
+		_zeroGrid(jac_resid_h[depth_idx], points);
+		_zeroGrid(jac_rhs_h[depth_idx], points);
       }
     }; // constructor
  
@@ -742,9 +986,11 @@ class FASMultigrid
       {
         VCycle();
       }
-      _relaxSolution_GaussSeidel(max_depth, 5000);
+      _relaxSolution_GaussSeidel_damp(max_depth, 2000);
       std::cout << "  Final solution residual is: "
                 << _getMaxResidual(max_depth) << ".\n" << std::flush;
+	   freopen("res.txt","w", stdout);
+		print_all(psi_h, max_depth);
     }
 
 
@@ -785,7 +1031,7 @@ class FASMultigrid
       {
         IDX_T idx = _gIdx(i,j,k,n);
         // add a random component ("worse" guess)
-        psi[idx] = psi[idx] + ( ((REAL_T) std::rand())/RAND_MAX - 0.5)/10.0;
+        psi[idx] = psi[idx] + ( ((REAL_T) std::rand())/RAND_MAX - 0.5)/1000.0;
       }
 
       initializeFinePsi(psi);
@@ -806,6 +1052,36 @@ class FASMultigrid
       }
       std::cout << "}\n";
     }
+	void print_all(fas_heirarchy_t out_h, IDX_T depth)
+	{
+		fas_grid_t const m = out_h[_dIdx(depth)];
+		IDX_T n = _2toPwr(depth);
+		std::cout<<"{";
+		
+		for(int i = 0; i < n; i++)
+		{
+			std::cout<<"{";
+			for(int j = 0; j < n; j++)
+			{
+				std::cout<<"{";
+				std::cout<<std::fixed<<m[_gIdx(i,j,0,n)];
+				for(int k = 1; k < n; k++)
+				{
+					
+					std::cout<<std::fixed<<","<<m[_gIdx(i,j,k,n)];
+				}
+				std::cout<<"}";
+				if(j != n-1)
+					std::cout<<",";
+			}
+			std::cout<<"}";
+			if(i != n-1)
+				std::cout<<',';
+			//std::cout<<"\n";
+        
+		}
+		std::cout<<"}";
+	}
 
 };
 
