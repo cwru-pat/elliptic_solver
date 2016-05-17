@@ -52,7 +52,7 @@ class FASMultigrid
 					
     IDX_T max_depth, max_depth_idx;
     IDX_T min_depth, min_depth_idx;
-    IDX_T total_depths;
+    IDX_T total_depths, relax_iters;
     REAL_T grid_length;
 
     /**
@@ -67,7 +67,10 @@ class FASMultigrid
     {
       return depth - min_depth;
     }
-
+    IDX_T _sign(REAL_T x)
+    {
+      return (x > 0) ? 1 : ((x < 0) ? -1 : 0);
+    }
     /**
      * @brief      Return array index of a point located at (i,j,k) on a
      * grid with periodic boundaries, of size n^3.
@@ -645,7 +648,7 @@ class FASMultigrid
 	void _shiftConstrainedDamping(IDX_T depth) 
     {
 		
-	  //shift the Jacob equation to satisy constraint, shometime does not helpful
+	  //shift the Jacob equation to satisy constraint, sometime does not helpful
       REAL_T eps = 0.0, shift = 0.0;
       REAL_T num, den, cnt=0;
 	  
@@ -657,7 +660,7 @@ class FASMultigrid
       _shiftGridVals(damping_v_h[depth_idx], shift, _Pwr3(n));
     }
 	
-	bool jac_relax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
+    bool jac_relax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
     {
 		//relax Jocob equation, currently without using constrain to speedup, so will work very slow
 		// C and p set the convergent speed of interation
@@ -665,16 +668,16 @@ class FASMultigrid
         IDX_T depth_idx = _dIdx(depth);
         IDX_T n = _2toPwr(depth), cnt = 0;
         REAL_T   norm_r = 1e100, dx = grid_length/n, norm_pre, temp;
-	    fas_grid_t const rho = rho_h[depth_idx];
-	    fas_grid_t const u = u_h[depth_idx];
-	    fas_grid_t const damping_v = damping_v_h[depth_idx];
-	    fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
+	fas_grid_t const rho = rho_h[depth_idx];
+        fas_grid_t const u = u_h[depth_idx];
+        fas_grid_t const damping_v = damping_v_h[depth_idx];
+        fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
         fas_grid_t const coarse_src = coarse_src_h[depth_idx];
 		
-		FAS_LOOP3_N(i, j, k, n)
-		{
-			damping_v[_gIdx(i,j,k,n)] = 0.0;
-		}
+	FAS_LOOP3_N(i, j, k, n)
+	{
+	  damping_v[_gIdx(i,j,k,n)] = 0.0;
+       	}
 		
         while( norm_r >= std::min(pow(norm, (REAL_T)(p+1)) * C, norm)) 
         {
@@ -686,29 +689,29 @@ class FASMultigrid
             {
                 IDX_T idx = _gIdx(i, j, k, n);
                 damping_v[idx] = (damping_v[_gIdx(i+1, j, k, n)] + damping_v[_gIdx(i-1, j, k, n)] +
-											damping_v[_gIdx(i, j+1, k, n)] + damping_v[_gIdx(i, j-1, k, n)] +
-											damping_v[_gIdx(i, j, k+1, n)] + damping_v[_gIdx(i, j, k-1, n)]
-											- jac_rhs[idx] * dx *dx) /
-											( 6.0 - 5.0*rho[idx]*std::pow(u[idx], 4.0) *dx *dx);
+			      	damping_v[_gIdx(i, j+1, k, n)] + damping_v[_gIdx(i, j-1, k, n)] +
+  				damping_v[_gIdx(i, j, k+1, n)] + damping_v[_gIdx(i, j, k-1, n)]
+			      	- jac_rhs[idx] * dx *dx) /
+			       ( 6.0 - 5.0*rho[idx]*std::pow(u[idx], 4.0) *dx *dx);
 				/*damping_v[depth_idx][idx]  -= (_laplacian(damping_v[depth_idx], i, j, k, n) 
-												+ 5.0*rho_h[depth_idx][idx]*std::pow(u_h[depth_idx][idx], 4.0) * damping_v[depth_idx][idx] 
-												- jac_rhs[depth_idx][idx])/(-6.0/ dx/dx + 5.0*rho_h[depth_idx][idx]*std::pow(u_h[depth_idx][idx], 4.0));*/
+			   	+ 5.0*rho_h[depth_idx][idx]*std::pow(u_h[depth_idx][idx], 4.0) * damping_v[depth_idx][idx] 
+		   	- jac_rhs[depth_idx][idx])/(-6.0/ dx/dx + 5.0*rho_h[depth_idx][idx]*std::pow(u_h[depth_idx][idx], 4.0));*/
             }
             
             FAS_LOOP3_N(i,j,k,n)
             {
-				IDX_T idx = _gIdx(i, j, k, n);
+		IDX_T idx = _gIdx(i, j, k, n);
                 temp = _laplacian(damping_v, i, j, k, n) 
-											+ 5.0*rho[idx]*std::pow(u[idx], 4.0) * damping_v[idx]
-											- jac_rhs[idx];
+		     	+ 5.0*rho[idx]*std::pow(u[idx], 4.0) * damping_v[idx]
+			  	- jac_rhs[idx];
 				
                 norm_r += temp * temp;
             }
 			
             //_shiftConstrainedDamping(depth); 
 			
-			cnt++;
-			if(cnt > 500 && norm_r > norm_pre) 
+	    cnt++;
+	    if(cnt > 500 && norm_r > norm_pre) 
             {
                 //cannot solve Jacobian equation to precision needed
                 std::cout<<"cannot get enough precision!\n";
@@ -719,6 +722,20 @@ class FASMultigrid
 		
     }
 	
+    bool _find_sigularity(IDX_T depth)
+    {
+      IDX_T i;
+      IDX_T depth_idx = _dIdx(depth);
+      IDX_T n = _2toPwr(depth);
+      fas_grid_t const u = u_h[depth_idx];
+      
+      for(i = 1; i < n * n *n ; i++)
+      {
+        if ( _sign(u[i]) * _sign(u[0]) < 0 )
+          return 1;
+      }
+      return 0;
+    }
 	void _relaxSolution_GaussSeidel_damp(IDX_T depth, IDX_T iterations)
     {
       // relax u using the inexact Newton iteration
@@ -766,7 +783,7 @@ class FASMultigrid
             IDX_T idx = _gIdx(i,j,k,n);
             lap_v[idx] = _laplacian(damping_v, i, j, k, n);
         }
-        //get lambda
+        //get damping parameter lambda
         lambda = _getLambda(depth, norm);
 
         FAS_LOOP3_N(i,j,k,n)
@@ -794,10 +811,10 @@ class FASMultigrid
      * @param[in]  min_depth_in "depth" of coarsest grid (size is n = 2^min_depth)
      * @param[in]  grid_length physical length of a side of the grid
      */
-    FASMultigrid(IDX_T max_depth_in, IDX_T min_depth_in, REAL_T grid_length_in)
+    FASMultigrid(IDX_T max_depth_in, IDX_T min_depth_in, REAL_T grid_length_in, IDX_T inter_num)
     {
       grid_length = grid_length_in;
-
+      relax_iters = inter_num;
       max_depth = max_depth_in;
       min_depth = min_depth_in;
       max_depth_idx = _dIdx(max_depth);
@@ -874,13 +891,15 @@ class FASMultigrid
         _restrictFine2coarse(rho_h, depth);
       }
     }
-
+    
+    
     void VCycle()
     {
-      IDX_T relax_iters = 5;
+      //IDX_T  = 5;
 
       // initial residual
       _relaxSolution_GaussSeidel_damp(max_depth, relax_iters);
+      // printStrip(u_h, max_depth);
       std::cout << "  Initial max. residual on fine grid is: "
                 << _getMaxResidual(max_depth) << ".\n" << std::flush;
 
@@ -932,8 +951,10 @@ class FASMultigrid
       _relaxSolution_GaussSeidel_damp(max_depth, 10);
       std::cout << "  Final solution residual is: "
                 << _getMaxResidual(max_depth) << ".\n" << std::flush;
-	   freopen("res.txt","w", stdout);
-		print_all(u_h, max_depth);
+	   if(_find_sigularity(max_depth))
+         std::cout<<"Warning!!! Solution crosses 0!!!\n";
+       else
+         std::cout<<"Solution stays positive or negative\n";
     }
 
 
@@ -978,7 +999,7 @@ class FASMultigrid
       }
 
       initializeFineU(u);
-      initializeRhoHeirarchy(rho);
+
     }
 
     void printStrip(fas_heirarchy_t out_h, IDX_T depth)
@@ -1029,3 +1050,4 @@ class FASMultigrid
 };
 
 #endif
+
