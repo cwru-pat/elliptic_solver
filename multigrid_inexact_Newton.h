@@ -64,6 +64,11 @@ class FASMultigrid
   REAL_T grid_length;
   IDX_T rho_num; // number of source terms
   IDX_T * u_idx; //storing the exponential idex of u for each term, has rho_num terms in total 
+
+  // determin relaxation scheme: 0 for inexact Newton, 1 for inexact Newton with applying shift to solve Jacobian equation
+  // 2 for regular Newton iteration
+  IDX_T relax_scheme;
+ 
   /**
    * @brief indexing scheme of a grid heirarchy
    * @description return index of grid at a particular depth
@@ -749,8 +754,8 @@ class FASMultigrid
 				
 	norm_r += temp * temp;
       }
-
-      _shiftConstrainedDamping(depth); 
+      if(relax_scheme == 1)
+	_shiftConstrainedDamping(depth); 
 			
       cnt++;
 
@@ -780,14 +785,14 @@ class FASMultigrid
     }
     return 0;
   }
-  void _relaxSolution_GaussSeidel_damp(IDX_T depth, IDX_T iterations)
+  void _relaxSolution_GaussSeidel(IDX_T depth, IDX_T iterations)
   {
     // relax u using the inexact Newton iteration
 	  
     IDX_T i, j, k, s;
     IDX_T depth_idx = _dIdx(depth);
     IDX_T n = _2toPwr(depth);
-    REAL_T temp, lambda, norm;
+    REAL_T temp, lambda, norm, dx = grid_length / n;
 
 
     fas_grid_t const u = u_h[depth_idx];
@@ -802,52 +807,68 @@ class FASMultigrid
 
     for(s=0; s<iterations; ++s)
     {
-        
-      //#pragma omp parallel for default(shared) private(i,j,k)
-      norm = 0.0;
-     
-      FAS_LOOP3_N(i,j,k,n)
-      {
-	
-	IDX_T idx = _gIdx(i, j, k, n);
 
-	temp  =  _laplacian(u, i, j, k, n)
-	  //+ rho[idx]*std::pow(u[idx], 5.0) - coarse_src[idx];
-	  + _srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
+      if(relax_scheme <= 1)
+      {
+	//#pragma omp parallel for default(shared) private(i,j,k)
+	norm = 0.0;
+     
+	FAS_LOOP3_N(i,j,k,n)
+	{
+	
+	  IDX_T idx = _gIdx(i, j, k, n);
+
+	  temp  =  _laplacian(u, i, j, k, n)
+	
+	    + _srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
 	  norm += temp * temp; // updating norm of F(u)
-	//updating _lap(u) - f
+	  //updating _lap(u) - f
 	 
-	damping_tmp[idx] = _laplacian(u, i, j, k, n) - coarse_src[idx];
-	//evalue jac_source at right hand side of Jacobian linear equation
-	jac_rhs[idx] = -_evaluateEllipticEquationPt(depth, i, j, k) + coarse_src[idx];  
+	  damping_tmp[idx] = _laplacian(u, i, j, k, n) - coarse_src[idx];
+	  //evalue jac_source at right hand side of Jacobian linear equation
+	  jac_rhs[idx] = -_evaluateEllipticEquationPt(depth, i, j, k) + coarse_src[idx];  
 	
-      }
+	}
         
      
-      if( jac_relax(depth, norm, 1, 0) ==0) //relax to solve Jacobian linear equation
-	break;
-      FAS_LOOP3_N(i,j,k,n)
-      {
-	//updating _lap(v) which help to calculate F(u + \lambda v)
-	IDX_T idx = _gIdx(i,j,k,n);
-	lap_v[idx] = _laplacian(damping_v, i, j, k, n);
-      }
-      //get damping parameter lambda
-      lambda = _getLambda(depth, norm);
+	if( jac_relax(depth, norm, 1, 0) == 0) //relax to solve Jacobian linear equation
+	  break;
+	FAS_LOOP3_N(i,j,k,n)
+	{
+	  //updating _lap(v) which help to calculate F(u + \lambda v)
+	  IDX_T idx = _gIdx(i,j,k,n);
+	  lap_v[idx] = _laplacian(damping_v, i, j, k, n);
+	}
+	//get damping parameter lambda
+	lambda = _getLambda(depth, norm);
 
-      FAS_LOOP3_N(i,j,k,n)
-      {
-	IDX_T idx = _gIdx(i, j, k, n);
+	FAS_LOOP3_N(i,j,k,n)
+	{
+	  IDX_T idx = _gIdx(i, j, k, n);
 
-	// update u according to lambda and v
-	u[idx] += damping_v[idx] * lambda;
+	  // update u according to lambda and v
+	  u[idx] += damping_v[idx] * lambda;
+	}
+        
+	temp = _getMaxResidual(depth);
+        
+        
+	if(temp < 1e-6) //set presision
+	  break;
       }
-        
-      temp = _getMaxResidual(depth);
-        
-        
-      if(temp < 1e-6) //set presision
-	break;
+      else if (relax_scheme == 2)
+      {	
+	FAS_LOOP3_N(i,j,k,n)
+        {
+          IDX_T idx = _gIdx(i, j, k, n);
+
+          // Gauss-Seidel step for equation of interest
+          REAL_T current_residual = _laplacian(u, i, j, k, n)
+            +_srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
+          u[idx] -= current_residual/(-6.0/dx/dx + _srcValDir(idx, depth_idx, u[idx]));
+        }
+      }
+      
     }
   }
  public:
@@ -860,10 +881,11 @@ class FASMultigrid
    * @param[in]  min_depth_in "depth" of coarsest grid (size is n = 2^min_depth)
    * @param[in]  grid_length physical length of a side of the grid
    */
-  FASMultigrid(IDX_T max_depth_in, IDX_T min_depth_in, REAL_T grid_length_in, IDX_T inter_num)
+  FASMultigrid(IDX_T max_depth_in, IDX_T min_depth_in, REAL_T grid_length_in, IDX_T inter_num, IDX_T relax_scheme_in)
   {
     IDX_T i, j, k, depth_idx, n, points;
     grid_length = grid_length_in;
+    relax_scheme = relax_scheme_in;
     relax_iters = inter_num;
     max_depth = max_depth_in;
     min_depth = min_depth_in;
@@ -972,7 +994,7 @@ class FASMultigrid
     //IDX_T  = 5;
 
     // initial residual
-    _relaxSolution_GaussSeidel_damp(max_depth, relax_iters);
+    _relaxSolution_GaussSeidel(max_depth, relax_iters);
     //printStrip(u_h, max_depth);
     std::cout << "  Initial max. residual on fine grid is: "
 	      << _getMaxResidual(max_depth) << ".\n" << std::flush;
@@ -994,7 +1016,7 @@ class FASMultigrid
     for(coarse_depth = min_depth; coarse_depth < max_depth; coarse_depth++)
     {
       // relax "true" solution in u_h
-      _relaxSolution_GaussSeidel_damp(coarse_depth, relax_iters);
+      _relaxSolution_GaussSeidel(coarse_depth, relax_iters);
       
       std::cout << "    Working on upward stroke at depth " << coarse_depth
 		<< "; residual after solving is: "
@@ -1009,7 +1031,7 @@ class FASMultigrid
     }
 
     // final relaxation
-    _relaxSolution_GaussSeidel_damp(max_depth, relax_iters);
+    _relaxSolution_GaussSeidel(max_depth, relax_iters);
     std::cout << "  Final max. residual on fine grid is: "
 	      << _getMaxResidual(max_depth) << ".\n" << std::flush;
     // std::cout << "  u (fine) slice is: "; printStrip(u_h, max_depth);
@@ -1023,7 +1045,7 @@ class FASMultigrid
       VCycle();
       
     }
-    _relaxSolution_GaussSeidel_damp(max_depth, 10);
+    _relaxSolution_GaussSeidel(max_depth, 10);
     std::cout << "  Final solution residual is: "
 	      << _getMaxResidual(max_depth) << ".\n" << std::flush;
     if(_find_sigularity(max_depth))
@@ -1115,7 +1137,7 @@ class FASMultigrid
       
       initializeRhoHeirarchy();
 
-
+      printStrip(rho_h[0], max_depth);
       
     }
 
