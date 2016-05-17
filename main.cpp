@@ -1,4 +1,4 @@
-#include "multigrid_multi_source.h"
+#include "multigrid_inexact_Newton.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -20,7 +20,6 @@ int main(int argc, char **argv)
   idx_t min_depth = 2;
   idx_t max_depth = 7;
   real_t grid_length = 1.0;
-  //std::cout<<"fuck\n";
   FASMultigrid<real_t, idx_t> multigrid (max_depth, min_depth, grid_length, 5);
   std::cout << "  initializing...\n";
   multigrid.add_poly_srcs(0); 
