@@ -1,4 +1,4 @@
-#include "multigrid_inexact_Newton.h"
+#include "multigrid.h"
 #include <iostream>
 #include <cstdlib>
 
