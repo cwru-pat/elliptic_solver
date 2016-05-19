@@ -25,7 +25,7 @@ int main(int argc, char **argv)
   // relax_scheme =  0 for damping inexact Newton;
   //1 for damping inexact Newton with constraint to speed up;
   // 2 for regular Newton interation
-  idx_t relax_scheme = 0;
+  idx_t relax_scheme = 1;
   idx_t grid_length_x = 1, grid_length_y = 1, grid_length_z = 1;
 
   //set grid number of different direction, usually we require: grid_num_i % (2^iter_depth) == 0
@@ -38,12 +38,12 @@ int main(int argc, char **argv)
   grid_length_x, grid_length_y, grid_length_z, iter_depth, iter_num, relax_scheme);
   //FASMultigrid<real_t, idx_t> multigrid (max_depth, min_depth, 1, iter_num, relax_scheme);
   std::cout << "  initializing...\n";
-  multigrid.setTrialSolution(1);
-  multigrid.add_poly_srcs(1); 
+  multigrid.setTrialSolution(0);
+  multigrid.add_poly_srcs(0); 
 
   std::cout << "  done.\n";
   std::cout << "Performing V-Cycles...\n";
-  multigrid.VCycles(5);
+  multigrid.VCycles(3);
   std::cout << "  done.\n";
   
   exit(EXIT_SUCCESS);
