@@ -1,7 +1,7 @@
 #ifndef FAS_MULTIGRID_H
 #define FAS_MULTIGRID_H
 
-//#include <omp.h>
+#include <omp.h>
 #include <algorithm>
 #include <iostream>
 #include <cmath>
@@ -969,7 +969,7 @@ class FASMultigrid
 	}
 	//get damping parameter lambda
 	lambda = _getLambda(depth, norm);
-	std::cout<<lambda<<"\n";
+	//std::cout<<lambda<<"\n";
 	#pragma omp parallel for default(shared) private(i,j,k)
 	FAS_LOOP3_N(i,j,k,nx,ny,nz)
 	{
@@ -1232,9 +1232,10 @@ class FASMultigrid
 	IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
 
 	// generate trial solution
-	u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
+	/*u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
 	  * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
-	  * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
+	  * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/100000.0;*/
+	u[idx] = 2.0;
       }
     }
     else if(type == 1 )
@@ -1281,7 +1282,7 @@ class FASMultigrid
     IDX_T depth_idx = _dIdx(max_depth);
     IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
     REAL_T dx = grid_length_x/nx, dy = grid_length_y/ny, dz = grid_length_z/nz;
-    REAL_T K = 0.0, delta_phi = 0.01 , Lambda = 0.01;//set potential equals constant \Lambda
+    REAL_T K = 0.0, delta_phi = 0.01 , Lambda = 0.00001;//set potential equals constant \Lambda
     if(type == 0) //type == 0 for constant K case
     {
       
@@ -1292,10 +1293,10 @@ class FASMultigrid
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
 	IDX_T idx = _gIdx(i, j ,k, nx, ny, nz);
-	rho_h[0][depth_idx][idx] += - PI *
+	rho_h[0][depth_idx][idx] =  PI *
 	      (   _Pwr2( delta_phi * 2.0 * PI / (grid_length_x) ) *
-		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_z + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-			  + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+			  + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
 	        +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) ) *
 		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
 			    + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
@@ -1305,7 +1306,7 @@ class FASMultigrid
 			     + std::sin(-2.0 * PI *(REAL_T)k * dz /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
 		    );
       }
-      
+      //printStrip(rho_h[0], max_depth);
       u_exp[1] = 5; //initial \Psi^5 term
      
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
@@ -1313,8 +1314,8 @@ class FASMultigrid
 	IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
 	K += Lambda * dx * dy * dz/ 4.0 +
 	       (   _Pwr2( delta_phi* 2.0 * PI /(grid_length_x) ) *
-		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_z + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-			  + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+			  + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
 	        +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) ) *
 		   _Pwr2(-std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
 			    + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
@@ -1325,13 +1326,13 @@ class FASMultigrid
 		    ) * dx * dy * dz / 8.0;
       }
       K = - K / (grid_length_x * grid_length_y * grid_length_z);
-
+      
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
 	IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
 	rho_h[1][depth_idx][idx] = K + PI * Lambda;
       }
-      
+      std::cout<<K + PI * Lambda<<"\n";
       initializeRhoHeirarchy();
 
       //printStrip(rho_h[0], max_depth);
