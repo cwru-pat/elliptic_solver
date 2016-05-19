@@ -19,8 +19,12 @@
  * @brief Full Approximation Storage ("FAS") Multigrid solver class
  * @details 
  * see: https://computation.llnl.gov/casc/people/henson/postscript/UCRL_JC_150259.pdf
+ *
  * section 3 for a very concise, clean description of the FAS Scheme.
- *  
+ *
+ * And also: http://www.scicomp.ucsd.edu/~mholst/pubs/dist/Hols94e.pdf
+ * for introduction to inexact Newton method.  
+ * 
  * In this implementation, the following step is done for restriction:
  *   restrict a fine grid approximation to a coarser grid:
  *     - compute the approximate solution on the coarse grid:
@@ -63,7 +67,7 @@ class FASMultigrid
   IDX_T total_depths, relax_iters;
   REAL_T grid_length_x, grid_length_y, grid_length_z;
   IDX_T rho_num; // number of source terms
-  IDX_T * u_idx; //storing the exponential idex of u for each term, has rho_num terms in total 
+  IDX_T * u_exp; //storing the exponential idex of u for each term, has rho_num terms in total 
   IDX_T * nx_h, * ny_h, * nz_h; //storing the number of grids for each hairarchy
   // determin relaxation scheme: 0 for inexact Newton, 1 for inexact Newton with applying shift to solve Jacobian equation
   // 2 for regular Newton iteration
@@ -92,7 +96,9 @@ class FASMultigrid
    * @param[in]  i     label of points in x-dir
    * @param[in]  j     label of points in y-dir
    * @param[in]  k     label of points in z-dir
-   * @param[in]  n     Assuming dimension of n^3
+   * @param[in]  nx    number of grids in x-dir
+   * @param[in]  ny    number of grids in y-dir
+   * @param[in]  nz    number of grids in z-dir
    * 
    * @return     array index
    */
@@ -100,21 +106,36 @@ class FASMultigrid
   {
     return ((i+nx)%nx)*ny*nz + ((j+ny)%ny)*nz + (k+nz)%nz;
   }
+
+  /**
+   * @brief return the value of left hand side elliptical equation besides the Laplacian term
+   * @param index of position
+   * @param index of depth
+   * @param the value of u
+   */
   REAL_T _srcVal(IDX_T pos_idx, IDX_T depth_idx, REAL_T u) //evaluate total value of all sources
   {
     REAL_T ans = 0.0;
     for(IDX_T I = 0; I < rho_num; I++)
     {
-      ans += rho_h[I][depth_idx][pos_idx] * std::pow(u, (REAL_T)u_idx[I]);
+      ans += rho_h[I][depth_idx][pos_idx] * std::pow(u, (REAL_T)u_exp[I]);
     }
     return ans;
   }
+
+  /**
+   * @brief return the value of left hand side elliptical equation besides the Laplacian term after derivation
+   * @param index of position
+   * @param index of depth
+   * @param the value of u
+   */
   REAL_T _srcValDir(IDX_T pos_idx, IDX_T depth_idx, REAL_T u) // evaluate total derivative value of alls sources
   {
     REAL_T ans = 0.0;
+    
     for(IDX_T I = 0; I < rho_num; I++)
     {
-      ans += (REAL_T)u_idx[I] * rho_h[I][depth_idx][pos_idx] * std::pow(u, (REAL_T)u_idx[I]-1.0);
+      ans += (REAL_T)u_exp[I] * rho_h[I][depth_idx][pos_idx] * std::pow(u, (REAL_T)u_exp[I]-1.0);
     }
     return ans;
   }
@@ -265,7 +286,8 @@ class FASMultigrid
 
     /**
      * @brief interpolate a coarse grid to a finer grid
-     *  TODO: document
+     * @details using a lot of "if" before updating to deal with the boundary probs when
+     * n_coarse * 2 != n_fine 
      */
   void _interpolateCoarse2fine(fas_heirarchy_t grid_heirarchy,  IDX_T coarse_depth) 
   {   
@@ -676,6 +698,13 @@ class FASMultigrid
     std::copy(from, from + points, to);
   }
 
+  /**
+   * @brief linear enumerate \lambda from 1 to zero to get the largest one that satisfy
+   *        norm less than the norm of F(u)
+   * @param depth
+   * @param norm
+   *
+   */
 	
   REAL_T _getLambda(IDX_T depth, REAL_T norm)
   {
@@ -692,8 +721,10 @@ class FASMultigrid
 		
     for( s = 0; s < 100; s++)
     {
-      lambda = 1.0 - (REAL_T)s * 0.01; //shoule always start with \lambda = 1
+      lambda = 1.0 - (REAL_T)s * 0.01; //should always start with \lambda = 1
       sum = 0.0;
+      
+      #pragma omp parallel for default(shared) private(i,j,k,temp) reduction(+:sum)
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
 	IDX_T idx = _gIdx(i, j, k, nx,ny,nz);
@@ -706,9 +737,18 @@ class FASMultigrid
       if(sum <= norm)  // when | F(u + \lambda v) | < | F(u) | stop
 	return lambda;
     }
+    
+      //printStrip(damping_v_h, depth);
+      //std::cout<<sum<<" "<<norm<<"\n";
+    
     return lambda;
   }
-	
+
+  /**
+   * @brief calculating total of Jacob constraint
+   * @param depth
+   * @param shift
+   */
   REAL_T _dampingConstraintTotal(IDX_T depth, REAL_T shift)
   {
     //calculating total  of Jacob equation after shift
@@ -752,7 +792,10 @@ class FASMultigrid
 
     return total;
   }
-	
+  /**
+   * @brief find shift to Jacob equation to satisfy the zero integration constraint
+   * @param depth
+   */
   void _shiftConstrainedDamping(IDX_T depth) 
   {
 		
@@ -768,10 +811,19 @@ class FASMultigrid
     IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
     _shiftGridVals(damping_v_h[depth_idx], shift, nx * ny *nz );
   }
-	
+
+  /**
+   * @brief relax Jacob equation to a certain precision
+   * @details can be controled to use constrait or not, 
+   * @param depth
+   * @param norm of F(u)
+   * @param parameter can control the converge speed
+   * @param parameter can control the converge speed
+   *
+   */
   bool jac_relax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
   {
-    //relax Jocob equation, currently without using constrain to speedup, so will work very slow
+ 
     // C and p set the convergent speed of interation
     IDX_T i, j, k, s;
     IDX_T depth_idx = _dIdx(depth);
@@ -783,7 +835,8 @@ class FASMultigrid
     fas_grid_t const damping_v = damping_v_h[depth_idx];
     fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
     fas_grid_t const coarse_src = coarse_src_h[depth_idx];
-		
+
+    #pragma omp parallel for default(shared) private(i,j,k)
     FAS_LOOP3_N(i, j, k, nx, ny, nz)
     {
       damping_v[_gIdx(i,j,k,nx, ny, nz)] = 0.0;
@@ -810,7 +863,8 @@ class FASMultigrid
 	    - _srcValDir(idx, depth_idx, u[idx]) *dx *dx * dy * dy * dz * dz);
 
       }
-            
+
+      #pragma omp parallel for default(shared) private(i,j,k)
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
 	IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
@@ -837,8 +891,13 @@ class FASMultigrid
     return 1;
 		
   }
-	
-  bool _find_sigularity(IDX_T depth)
+  
+  /**
+   * @brief find singularity in the solution, returns 1 if singularity found
+   *
+   * @param depth 
+   */
+  bool _find_singularity(IDX_T depth)
   {
     IDX_T i;
     IDX_T depth_idx = _dIdx(depth);
@@ -877,9 +936,9 @@ class FASMultigrid
 
       if(relax_scheme <= 1)
       {
-	//#pragma omp parallel for default(shared) private(i,j,k)
 	norm = 0.0;
-     
+	
+	#pragma omp parallel for default(shared) private(i,j,k)
 	FAS_LOOP3_N(i,j,k,nx,ny,nz)
 	{
 	
@@ -900,6 +959,8 @@ class FASMultigrid
      
 	if( jac_relax(depth, norm, 1, 0) == 0) //relax to solve Jacobian linear equation
 	  break;
+	
+	#pragma omp parallel for default(shared) private(i,j,k)
 	FAS_LOOP3_N(i,j,k,nx,ny,nz)
 	{
 	  //updating _lap(v) which help to calculate F(u + \lambda v)
@@ -908,7 +969,8 @@ class FASMultigrid
 	}
 	//get damping parameter lambda
 	lambda = _getLambda(depth, norm);
-
+	std::cout<<lambda<<"\n";
+	#pragma omp parallel for default(shared) private(i,j,k)
 	FAS_LOOP3_N(i,j,k,nx,ny,nz)
 	{
 	  IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
@@ -944,9 +1006,18 @@ class FASMultigrid
    * @brief Constructor
    * @details Initialize internal variables, allocate memory
    * 
-   * @param[in]  max_depth_in "depth" of finest grid (size is n = 2^max_depth)
-   * @param[in]  min_depth_in "depth" of coarsest grid (size is n = 2^min_depth)
-   * @param[in]  grid_length physical length of a side of the grid
+   * @param[in]  grid number in x direction
+   * @param[in]  grid number in y direction
+   * @param[in]  grid number in z direction
+   * @param[in]  grid length in x direction
+   * @param[in]  grid length in y direction
+   * @param[in]  grid length in z direction
+   * @param[in]  number of layers for multigrid iteration
+   * @param[in]  iteration number when relax
+   * @param[in]  relaxation scheme: 
+   * 0 for damping inexact Newton;
+   * 1 for damping inexact Newton with constraint to speed up;
+   * 2 for regular Newton interation
    */
   FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
 	       REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
@@ -1022,12 +1093,19 @@ class FASMultigrid
       
   }; // constructor
 
-  void build_rho(IDX_T src_num) //allocate the space of rho with src_num of sources
+
+
+  /**
+   * @brief allocate the space of rho with src_num of sources
+   *
+   * @param number of source terms  
+   */  
+  void build_rho(IDX_T src_num)
   {
     
     rho_num = src_num;
     rho_h = new  fas_heirarchy_t[rho_num];
-    u_idx = new IDX_T[rho_num];
+    u_exp = new IDX_T[rho_num];
     for( IDX_T I = 0; I < rho_num; I++)
     {
       rho_h[I] = new fas_grid_t[total_depths];
@@ -1043,28 +1121,15 @@ class FASMultigrid
       
     }
   }
-  /**
-   * @brief Initialize u on finest grid
-   * 
-   * @param u_guess guess for \u on the finest grid
-   */
-  void initializeFineU(REAL_T *u)
-  {
-    IDX_T points = nx_h[_dIdx(max_depth)] * ny_h[_dIdx(max_depth)] * nz_h[_dIdx(max_depth)];
-    std::copy(u, u + points, u_h[max_depth_idx]);
-  }
 
   /**
    * @brief      Initialize matter source on all grids
    *
-   * @param      rho   matter source on finest grid
    */
   void initializeRhoHeirarchy()
   {
     // initialize values on fine grid
     IDX_T points = nx_h[_dIdx(max_depth)] * ny_h[_dIdx(max_depth)] * nz_h[_dIdx(max_depth)];
-    //std::copy(rho, rho + points, rho_h[max_depth_idx]);
-
     // restrict supplied rho to coarser grids
     for(IDX_T I = 0; I < rho_num; I++)
     {
@@ -1078,7 +1143,6 @@ class FASMultigrid
     
   void VCycle()
   {
-    //IDX_T  = 5;
 
     // initial residual
     _relaxSolution_GaussSeidel(max_depth, relax_iters);
@@ -1135,16 +1199,19 @@ class FASMultigrid
     _relaxSolution_GaussSeidel(max_depth, 10);
     std::cout << "  Final solution residual is: "
 	      << _getMaxResidual(max_depth) << ".\n" << std::flush;
-    if(_find_sigularity(max_depth))
+    if(_find_singularity(max_depth))
       std::cout<<"Warning!!! Solution crosses 0!!!\n";
     else
       std::cout<<"Solution stays positive or negative\n";
     printStrip(u_h, max_depth);
   }
 
-
-  /* TODO: split initialization into child class */
-  void setTrialSolution()
+  /**
+   * @brief set trial solution for different type
+   *
+   * @param type of different rho, see parameter explanation for add_poly_srcs();
+   */
+  void setTrialSolution(IDX_T type)
   {
     IDX_T i, j, k;
     IDX_T depth_idx = _dIdx(max_depth);
@@ -1152,28 +1219,62 @@ class FASMultigrid
 
     fas_grid_t const u = u_h[max_depth_idx];
 
-
-    // frequency and phase of waves
-    REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
-    REAL_T phi1 = 0, phi2 = 0, phi3 = 0;
-
-    // generate trial solution u
-    
-    FAS_LOOP3_N(i,j,k,nx,ny,nz)
+    if(type == 0)
     {
-      IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+      // frequency and phase of waves
+      REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
+      REAL_T phi1 = 0, phi2 = 0, phi3 = 0;
 
-      // generate trial solution
-      u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
-	* std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
-	* std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
+      // generate trial solution u
+    
+      FAS_LOOP3_N(i,j,k,nx,ny,nz)
+      {
+	IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+
+	// generate trial solution
+	u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
+	  * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
+	  * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
+      }
     }
+    else if(type == 1 )
+    {
+            // frequency and phase of waves
+      REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
+      REAL_T phi1 = 0, phi2 = 0, phi3 = 0;
+
+      // generate trial solution u
     
-    
-    initializeFineU(u);
+      FAS_LOOP3_N(i,j,k,nx,ny,nz)
+      {
+	IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+
+	// generate trial solution
+	u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
+	  * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
+	  * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
+      }
+    } 
+    // initializeFineU(u);
     
   }
 
+   /**
+   * @brief add source term to the elliptical equation
+   * @details 
+   * type = 0: This is the case in the paper: 1511.05143 where \rho is given by a inhomogeneous
+   * scalar field. The solver can deal with this case well with inexact Newton iteration
+   * with constraint to speedup (relax_scheme = 1).
+   *
+   * type = 1: This is the case for the case with analytical solution (we can get this 
+   * by calculating -\lap(u) / u^5 for a given inhomogenous function of u).
+   * In this case, for a very good guess ( u(exact) + (rand()/RAND_MAX - 0.5) / 100 ),
+   * it converges to precision 0.0002 without applying constraint to speed up 
+   * (actually, applying constraint makes thing worse in this case). 
+   * For worse guess, it may converge to zero.
+   * 
+   * @param u_guess guess for \u on the finest grid
+   */
   void add_poly_srcs(IDX_T type)
   {
     IDX_T i, j, k;
@@ -1186,7 +1287,7 @@ class FASMultigrid
       
       build_rho(2); // two sources for constant K: \Psi^5 polynomial term and \Psi^1 term
 
-      u_idx[0] = 1; // initialize \Psi^1 term
+      u_exp[0] = 1; // initialize \Psi^1 term
 
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
@@ -1205,7 +1306,7 @@ class FASMultigrid
 		    );
       }
       
-      u_idx[1] = 5; //initial \Psi^5 term
+      u_exp[1] = 5; //initial \Psi^5 term
      
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
@@ -1236,7 +1337,29 @@ class FASMultigrid
       //printStrip(rho_h[0], max_depth);
       
     }
+    else if(type == 1)
+    {
+      //set rho = /lap u / u^5, which has exact solution:u, then pertube u and interation and compare the result
+      build_rho(1);
+      u_exp[0] = 5;
+      rho_num = 1;
+      FAS_LOOP3_N(i,j,k,nx,ny,nz)
+      {
+	IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+	rho_h[0][depth_idx][idx]  = -_laplacian(u_h[depth_idx], i, j, k, nx, ny, nz)
+	  / std::pow(u_h[depth_idx][idx], 5.0);
+      }
+      initializeRhoHeirarchy();
+      printStrip(u_h, max_depth);
+      FAS_LOOP3_N(i,j,k,nx,ny,nz)
+      {
+	IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+	u_h[depth_idx][idx] +=( (REAL_T) rand()/RAND_MAX - 0.5 )/100;
 
+      }
+      //initializeFineU(u_h[depth_idx]);
+    }
+    
     
   }
 
