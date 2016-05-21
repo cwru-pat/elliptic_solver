@@ -40,7 +40,8 @@
 template <typename REAL_T, typename IDX_T>
 class FASMultigrid
 {
-  private:
+
+private:
   
   IDX_T max_depth, max_depth_idx;
   IDX_T min_depth, min_depth_idx;
@@ -1032,6 +1033,9 @@ class FASMultigrid
 
  public:
 
+  // expose relax_t enum
+  typedef relax_t relax_t;
+
   /**
    * @brief Constructor
    * @details Initialize internal variables, allocate memory
@@ -1230,9 +1234,9 @@ class FASMultigrid
         << _getMaxResidual(max_depth) << ".\n" << std::flush;
 
     if(_singularityExists(max_depth))
-      std::cout << "Warning!!! Solution crosses 0; solution may be singular at some points.\n";
+      std::cout << "Warning! Solution crosses 0; solution may be singular at some points.\n";
     else
-      std::cout << "Solution stays positive or negative\n";
+      std::cout << "Solution stays positive or negative (no singularities seem to exist).\n";
 
     printStrip(u_h, max_depth);
   }
@@ -1364,7 +1368,7 @@ class FASMultigrid
         rho_h[1][depth_idx][idx] = K + PI * Lambda;
       }
 
-      std::cout << K + PI * Lambda << "\n";
+      std::cout << "    K + PI * Lambda = " << K + PI * Lambda << "\n";
       initializeRhoHeirarchy();      
     }
     else if(type == 1)
