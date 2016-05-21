@@ -14,12 +14,10 @@
     for(j=0; j<ny; ++j)                   \
       for(k=0; k<nz; ++k)
 
-
 /**
  * @brief Full Approximation Storage ("FAS") Multigrid solver class
  * @details 
  * see: https://computation.llnl.gov/casc/people/henson/postscript/UCRL_JC_150259.pdf
- *
  * section 3 for a very concise, clean description of the FAS Scheme.
  *
  * And also: http://www.scicomp.ucsd.edu/~mholst/pubs/dist/Hols94e.pdf
@@ -33,9 +31,10 @@
  *        f^2h = A^2h ( v^2h ) + I^2h_h ( f^h - A^h ( v^h ) )
  * And the following is done for prolongation:
  *     - compute the error
+ *     (TODO: finish)
  *  
  * The set of grids (array of arrays) is referred to as a "heirarchy" of grids,
- * where each grid has some "depth". The size of the grid is N^3 = ( 2^(depth) )^3.
+ * where each grid has some "depth".
  * 
  */
 template <typename REAL_T, typename IDX_T>
@@ -56,6 +55,14 @@ class FASMultigrid
   typedef fas_grid_t * fas_heirarchy_t;
   // set of heirarchies
   typedef fas_heirarchy_t * fas_heirarchy_set_t;
+  // enum for relaxation type
+  enum relax_t { 
+    inexact_newton,
+    inexact_newton_constrained, // inexact Newton with volume constraint enforced
+    newton
+  };
+
+  relax_t relax_scheme;
 
   // define heirarchy of references to grids
   fas_heirarchy_t tmp_h,  // reusable grid for storing intermediate calculations
@@ -72,10 +79,6 @@ class FASMultigrid
   IDX_T * u_exp; // exponent of u for each term, has rho_num terms in total 
   fas_heirarchy_set_t rho_h; // source matter terms with number being rho_num;
 
-  // determin relaxation scheme: 0 for inexact Newton, 1 for inexact Newton with applying shift to solve Jacobian equation
-  // 2 for regular Newton iteration
-  IDX_T relax_scheme;
- 
   /**
    * @brief indexing scheme of a grid heirarchy
    * @description return index of grid at a particular depth
@@ -837,7 +840,7 @@ class FASMultigrid
   }
 
   /**
-   * @brief relax Jacob equation to a certain precision
+   * @brief perform Jacobian relaxation until a desired precision is reached
    * @details can be controled to use constrait or not, 
    * @param depth
    * @param norm of F(u)
@@ -869,7 +872,6 @@ class FASMultigrid
     
     while( norm_r >= std::min(pow(norm, (REAL_T)(p+1)) * C, norm)) 
     {
-      
       //relax until the convergent condition got satisfy 
       norm_r = 0.0;
       norm_pre = 0.0;
@@ -898,7 +900,7 @@ class FASMultigrid
         norm_r += temp * temp;
       }
 
-      if(relax_scheme == 1)
+      if(relax_scheme == inexact_newton_constrained)
         _shiftConstrainedDamping(depth); 
             
       cnt++;
@@ -906,12 +908,13 @@ class FASMultigrid
       if(cnt > 500 && norm_r > norm_pre) 
       {
         //cannot solve Jacobian equation to precision needed
-        std::cout<<"cannot get enough precision!\n";
-        return 0;
+        std::cout << "Unable to achieve a precise enough solution within "
+                  << cnt << " iterations.\n";
+        return false;
       }
     }
 
-    return 1;
+    return true;
   }
   
   /**
@@ -938,7 +941,7 @@ class FASMultigrid
   /**
    * @brief relax u using the inexact Newton iterative method
    */
-  void _relaxSolution_GaussSeidel(IDX_T depth, IDX_T iterations)
+  void _relaxSolution_GaussSeidel(IDX_T depth, IDX_T max_iterations)
   {
     IDX_T i, j, k, s;
     IDX_T depth_idx = _dIdx(depth);
@@ -952,10 +955,11 @@ class FASMultigrid
     fas_grid_t const damping_tmp = damping_tmp_h[depth_idx];
     fas_grid_t const lap_v = lap_v_h[depth_idx];
 
-    for(s=0; s<iterations; ++s)
+    for(s=0; s<max_iterations; ++s)
     {
 
-      if(relax_scheme <= 1)
+      if(relax_scheme == inexact_newton
+          || relax_scheme == inexact_newton_constrained)
       {
         norm = 0.0;
         
@@ -965,7 +969,7 @@ class FASMultigrid
         
           IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
 
-          temp  =  _laplacian(u, i, j, k, nx, ny, nz)
+          temp = _laplacian(u, i, j, k, nx, ny, nz)
             + _srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
 
           // updating norm of F(u)
@@ -988,9 +992,10 @@ class FASMultigrid
           IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
           lap_v[idx] = _laplacian(damping_v, i, j, k, nx, ny, nz);
         }
+
         //get damping parameter lambda
         lambda = _getLambda(depth, norm);
-        //std::cout<<lambda<<"\n";
+
         #pragma omp parallel for default(shared) private(i,j,k)
         FAS_LOOP3_N(i,j,k,nx,ny,nz)
         {
@@ -1002,7 +1007,7 @@ class FASMultigrid
               
         temp = _getMaxResidual(depth);
 
-        if(temp < 1e-6) //set presicion
+        if(temp < 1e-6) // set presicion
           break;
       }
       else if (relax_scheme == 2) // gauss-seidel
@@ -1013,12 +1018,18 @@ class FASMultigrid
 
           // Gauss-Seidel step for equation of interest
           REAL_T current_residual = _laplacian(u, i, j, k, nx, ny, nz)
-            +_srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
-          u[idx] -= current_residual/(-2.0/dx/dx - 2.0/dy/dy - 2.0/dz/dz + _srcValDir(idx, depth_idx, u[idx]));
+            + _srcVal(idx, depth_idx, u[idx]) - coarse_src[idx];
+
+          u[idx] -= current_residual / (
+              -2.0/dx/dx - 2.0/dy/dy - 2.0/dz/dz
+              + _srcValDir(idx, depth_idx, u[idx])
+            );
         }
       }
-    }// 
+    } // end iterations loop
+
   }
+
  public:
 
   /**
@@ -1040,7 +1051,7 @@ class FASMultigrid
    */
   FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
          REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-         IDX_T iter_depth_in, IDX_T  iter_num_in, IDX_T relax_scheme_in)
+         IDX_T iter_depth_in, IDX_T  iter_num_in, relax_t relax_scheme_in)
   {
     IDX_T i, j, k, depth_idx,  points;
    
@@ -1076,15 +1087,15 @@ class FASMultigrid
 
       if(depth_idx == _dIdx(max_depth))
       {
-  nx_h[depth_idx] = grid_num_x_in;
-  ny_h[depth_idx] = grid_num_y_in;
-  nz_h[depth_idx] = grid_num_z_in;
+        nx_h[depth_idx] = grid_num_x_in;
+        ny_h[depth_idx] = grid_num_y_in;
+        nz_h[depth_idx] = grid_num_z_in;
       }
       else
       {
-  nx_h[depth_idx] = nx_h[depth_idx+1] / 2 + (nx_h[depth_idx+1] % 2);
-  ny_h[depth_idx] = ny_h[depth_idx+1] / 2 + (ny_h[depth_idx+1] % 2);
-  nz_h[depth_idx] = nz_h[depth_idx+1] / 2 + (nz_h[depth_idx+1] % 2);
+        nx_h[depth_idx] = nx_h[depth_idx+1] / 2 + (nx_h[depth_idx+1] % 2);
+        ny_h[depth_idx] = ny_h[depth_idx+1] / 2 + (ny_h[depth_idx+1] % 2);
+        nz_h[depth_idx] = nz_h[depth_idx+1] / 2 + (nz_h[depth_idx+1] % 2);
       }
       
       points = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
@@ -1130,14 +1141,14 @@ class FASMultigrid
       rho_h[I] = new fas_grid_t[total_depths];
       for(IDX_T depth = min_depth; depth <=max_depth; depth++)
       {
-  IDX_T depth_idx = _dIdx(depth);
+        IDX_T depth_idx = _dIdx(depth);
     
         //IDX_T n = _2toPwr(depth);
         IDX_T points = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
-  rho_h[I][depth_idx] = new REAL_T[points]; 
-  _zeroGrid(rho_h[I][depth_idx], points);
+        rho_h[I][depth_idx] = new REAL_T[points]; 
+        _zeroGrid(rho_h[I][depth_idx], points);
       }
-      
+
     }
   }
 
@@ -1154,7 +1165,7 @@ class FASMultigrid
     {
       for(IDX_T depth = max_depth; depth > min_depth; --depth)
       {
-  _restrictFine2coarse(rho_h[I], depth);
+        _restrictFine2coarse(rho_h[I], depth);
       }
     }
   }
@@ -1209,19 +1220,20 @@ class FASMultigrid
 
   void VCycles(IDX_T num_cycles)
   {
-    
     for(int cycle=0; cycle < num_cycles; ++cycle)
     {
       VCycle();
-      
     }
+
     _relaxSolution_GaussSeidel(max_depth, 10);
     std::cout << "  Final solution residual is: "
         << _getMaxResidual(max_depth) << ".\n" << std::flush;
+
     if(_singularityExists(max_depth))
-      std::cout<<"Warning!!! Solution crosses 0!!!\n";
+      std::cout << "Warning!!! Solution crosses 0; solution may be singular at some points.\n";
     else
-      std::cout<<"Solution stays positive or negative\n";
+      std::cout << "Solution stays positive or negative\n";
+
     printStrip(u_h, max_depth);
   }
 
@@ -1248,35 +1260,27 @@ class FASMultigrid
     
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
-  IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
-
-  // generate trial solution
-  /*u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
-    * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
-    * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/100000.0;*/
-  u[idx] = 2.0;
+        IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+        u[idx] = 2.0;
       }
     }
     else if(type == 1 )
     {
-            // frequency and phase of waves
+      // frequency and phase of waves
       REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
       REAL_T phi1 = 0, phi2 = 0, phi3 = 0;
 
       // generate trial solution u
-    
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
-  IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+        IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
 
-  // generate trial solution
-  u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
-    * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
-    * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
+        // generate trial solution
+        u[idx] = 1.0 - std::sin( 2.0 * 3.14159265 * n1 * (REAL_T)i/ (nx) + phi1)
+          * std::sin( 2.0 * 3.14159265 * n2 * (REAL_T)j/ (ny) + phi2)
+          * std::sin( 2.0 * 3.14159265 * n3 * (REAL_T)k/ (nz) + phi3)/10.0;
       }
-    } 
-    // initializeFineU(u);
-    
+    }    
   }
 
    /**
@@ -1305,57 +1309,63 @@ class FASMultigrid
     if(type == 0) //type == 0 for constant K case
     {
       
-      build_rho(2); // two sources for constant K: \Psi^5 polynomial term and \Psi^1 term
+      // two sources for constant K: \Psi^5 polynomial term and \Psi^1 term
+      build_rho(2);
 
-      u_exp[0] = 1; // initialize \Psi^1 term
-
+      // initialize \Psi^1 term
+      u_exp[0] = 1;
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
-  IDX_T idx = _gIdx(i, j ,k, nx, ny, nz);
-  rho_h[0][depth_idx][idx] =  PI *
+        IDX_T idx = _gIdx(i, j ,k, nx, ny, nz);
+        rho_h[0][depth_idx][idx] =  PI *
         (   _Pwr2( delta_phi * 2.0 * PI / (grid_length_x) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-        + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
-          +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-          + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+           _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+            + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+              +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) ) *
+           _Pwr2(-std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+              + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
 
-          +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_z) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)k * dz / grid_length_z + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-           + std::sin(-2.0 * PI *(REAL_T)k * dz /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+              +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_z) ) *
+           _Pwr2(-std::sin(2.0 * PI *(REAL_T)k * dz / grid_length_z + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+               + std::sin(-2.0 * PI *(REAL_T)k * dz /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
         );
       }
-      //printStrip(rho_h[0], max_depth);
-      u_exp[1] = 5; //initial \Psi^5 term
-     
+
+      // initialize \Psi^5 term
+      u_exp[1] = 5;
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
-  IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
-  K += Lambda * dx * dy * dz/ 4.0 +
-         (   _Pwr2( delta_phi* 2.0 * PI /(grid_length_x) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-        + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
-          +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-          + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+        IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
+        K += Lambda * dx * dy * dz/ 4.0 + (
+          _Pwr2( delta_phi* 2.0 * PI /(grid_length_x) )
+            * _Pwr2( -std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x
+                              + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+                    + std::sin(-2.0 * PI *(REAL_T)i * dx /grid_length_x
+                              + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+          + _Pwr2( delta_phi* 2.0 * PI /(grid_length_y) )
+            * _Pwr2( -std::sin(2.0 * PI *(REAL_T)j * dy / grid_length_y
+                          + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+                      + std::sin(-2.0 * PI *(REAL_T)j * dy / grid_length_y
+                          + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
 
-          +  _Pwr2( delta_phi* 2.0 * PI /(grid_length_z) ) *
-       _Pwr2(-std::sin(2.0 * PI *(REAL_T)k * dz / grid_length_z + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
-           + std::sin(-2.0 * PI *(REAL_T)k * dz /grid_length_z +(REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
+          + _Pwr2( delta_phi* 2.0 * PI /(grid_length_z) )
+            * _Pwr2(-std::sin(2.0 * PI *(REAL_T)k * dz / grid_length_z
+                            + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI)
+                    + std::sin(-2.0 * PI *(REAL_T)k * dz /grid_length_z
+                            + (REAL_T)std::rand()/RAND_MAX * 2.0 * PI) )
         ) * dx * dy * dz / 8.0;
       }
+
       K = - K / (grid_length_x * grid_length_y * grid_length_z);
       
       FAS_LOOP3_N(i, j, k, nx, ny, nz)
       {
-  IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
-  rho_h[1][depth_idx][idx] = K + PI * Lambda;
+        IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
+        rho_h[1][depth_idx][idx] = K + PI * Lambda;
       }
-      std::cout<<K + PI * Lambda<<"\n";
-      initializeRhoHeirarchy();
 
-      //printStrip(rho_h[0], max_depth);
-      
+      std::cout << K + PI * Lambda << "\n";
+      initializeRhoHeirarchy();      
     }
     else if(type == 1)
     {
@@ -1365,21 +1375,19 @@ class FASMultigrid
       rho_num = 1;
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
-  IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
-  rho_h[0][depth_idx][idx]  = -_laplacian(u_h[depth_idx], i, j, k, nx, ny, nz)
-    / std::pow(u_h[depth_idx][idx], 5.0);
+        IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+        rho_h[0][depth_idx][idx]  = -_laplacian(u_h[depth_idx], i, j, k, nx, ny, nz)
+          / std::pow(u_h[depth_idx][idx], 5.0);
       }
+
       initializeRhoHeirarchy();
       printStrip(u_h, max_depth);
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
-  IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
-  u_h[depth_idx][idx] +=( (REAL_T) rand()/RAND_MAX - 0.5 )/100;
-
+        IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
+        u_h[depth_idx][idx] +=( (REAL_T) rand()/RAND_MAX - 0.5 )/100;
       }
-      //initializeFineU(u_h[depth_idx]);
     }
-    
     
   }
 
@@ -1404,31 +1412,28 @@ class FASMultigrid
     IDX_T depth_idx = _dIdx(depth);
     fas_grid_t const m = out_h[_dIdx(depth)];
     IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-    std::cout<<"{";
+    std::cout << "{";
     
     for(int i = 0; i < nx; i++)
     {
-      std::cout<<"{";
+      std::cout << "{";
       for(int j = 0; j < ny; j++)
       {
-  std::cout<<"{";
-  std::cout<<std::fixed<<m[_gIdx(i,j,0,nx,ny,nz)];
-  for(int k = 1; k < nz; k++)
-  {
-          
-    std::cout<<std::fixed<<","<<m[_gIdx(i,j,k,nx,ny,nz)];
-  }
-  std::cout<<"}";
-  if(j != ny-1)
-    std::cout<<",";
+        std::cout << "{";
+        std::cout<<std::fixed<<m[_gIdx(i,j,0,nx,ny,nz)];
+        for(int k = 1; k < nz; k++)
+        {
+          std::cout<<std::fixed<<","<<m[_gIdx(i,j,k,nx,ny,nz)];
+        }
+        std::cout << "}";
+        if(j != ny-1)
+          std::cout << ",";
       }
-      std::cout<<"}";
+      std::cout << "}";
       if(i != nx-1)
-  std::cout<<',';
-      //std::cout<<"\n";
-        
+        std::cout<<',';
     }
-    std::cout<<"}";
+    std::cout << "}";
   }
 
 };
