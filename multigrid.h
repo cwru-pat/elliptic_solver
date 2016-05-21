@@ -45,7 +45,7 @@ private:
   
   IDX_T max_depth, max_depth_idx;
   IDX_T min_depth, min_depth_idx;
-  IDX_T total_depths, relax_iters;
+  IDX_T total_depths, max_relax_iters;
   
   REAL_T grid_length_x, grid_length_y, grid_length_z;
   IDX_T * nx_h, * ny_h, * nz_h; // grid points in each direction at different depths
@@ -279,7 +279,7 @@ private:
     IDX_T fi, fj, fk; // fine grid indexes
 
     #pragma omp parallel for default(shared) private(i,j,k)
-    FAS_LOOP3_N(i,j,k,n_coarse_x, n_coarse_y, n_coarse_z)
+    FAS_LOOP3_N(i, j, k, n_coarse_x, n_coarse_y, n_coarse_z)
     {
       fi = i*2;
       fj = j*2;
@@ -831,7 +831,7 @@ private:
             - _srcValDir(idx, depth_idx, u[idx]) *dx *dx * dy * dy * dz * dz);
       }
 
-      #pragma omp parallel for default(shared) private(i,j,k)
+      #pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm_r)
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
         IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
@@ -906,7 +906,7 @@ private:
       {
         norm = 0.0;
         
-        #pragma omp parallel for default(shared) private(i,j,k)
+        #pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm)
         FAS_LOOP3_N(i,j,k,nx,ny,nz)
         {
         
@@ -973,37 +973,36 @@ private:
 
   }
 
- public:
-
-  // expose relax_t enum
-  typedef relax_t relax_t;
-
   /**
-   * @brief Constructor
-   * @details Initialize internal variables, allocate memory
+   * @brief Method to initialize internal variables, allocate memory
    * 
-   * @param[in]  grid number in x direction
-   * @param[in]  grid number in y direction
-   * @param[in]  grid number in z direction
+   * @param[in]  number grid points in x direction
+   * @param[in]  number grid points in y direction
+   * @param[in]  number grid points in z direction
    * @param[in]  grid length in x direction
    * @param[in]  grid length in y direction
    * @param[in]  grid length in z direction
-   * @param[in]  number of layers for multigrid iteration
-   * @param[in]  iteration number when relax
-   * @param[in]  relaxation scheme: 
-   * 0 for damping inexact Newton;
-   * 1 for damping inexact Newton with constraint to speed up;
-   * 2 for regular Newton interation
+   * @param[in]  number of multigrid layers
+   * @param[in]  maximum iterations when relaxing
+   * @param[in]  relaxation scheme (enum)
    */
-  FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
+  void _initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
          REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-         IDX_T iter_depth_in, IDX_T  iter_num_in, relax_t relax_scheme_in)
+         IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in)
   {
-    IDX_T i, j, k, depth_idx,  points;
+    IDX_T depth_idx, points;
+
+    if( grid_num_x_in % _2toPwr(max_depth) != 0
+      || grid_num_y_in % _2toPwr(max_depth) != 0
+      || grid_num_z_in % _2toPwr(max_depth) != 0)
+    {
+      std::cout << "Warning: Grid size is not divisible by 2^"
+        << max_depth << ".\n";
+    }
    
     relax_scheme = relax_scheme_in;
-    relax_iters = iter_num_in;
-    max_depth = iter_depth_in;
+    max_relax_iters = max_relax_iters_in;
+    max_depth = max_depth_in;
     min_depth = 1;
     max_depth_idx = _dIdx(max_depth);
     min_depth_idx = _dIdx(min_depth);
@@ -1012,6 +1011,7 @@ private:
     grid_length_x = grid_length_x_in;
     grid_length_y = grid_length_y_in;
     grid_length_z = grid_length_z_in;
+
     u_h = new fas_grid_t[total_depths];
 
     coarse_src_h = new fas_grid_t[total_depths];
@@ -1066,9 +1066,99 @@ private:
     
       _zeroGrid(jac_rhs_h[depth_idx], points);
     }   
-      
-  }; // constructor
+  }
 
+  void _printStrip(fas_heirarchy_t out_h, IDX_T depth)
+  {
+    IDX_T i;
+    IDX_T depth_idx = _dIdx(depth);
+    IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
+    fas_grid_t const out = out_h[_dIdx(depth)];
+    std::cout << std::fixed << "Values: { ";
+    for(i=0; i<nx; i++)
+    {
+      IDX_T idx = _gIdx(i,nx/4,ny/4, nx, ny, nz);
+      std::cout << out[idx];
+      std::cout << ", ";
+    }
+    std::cout << "}\n";
+  }
+
+  void _printAll(fas_heirarchy_t out_h, IDX_T depth)
+  {
+    IDX_T depth_idx = _dIdx(depth);
+    fas_grid_t const m = out_h[_dIdx(depth)];
+    IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
+    std::cout << "{";
+    
+    for(int i = 0; i < nx; i++)
+    {
+      std::cout << "{";
+      for(int j = 0; j < ny; j++)
+      {
+        std::cout << "{";
+        std::cout<<std::fixed<<m[_gIdx(i,j,0,nx,ny,nz)];
+        for(int k = 1; k < nz; k++)
+        {
+          std::cout<<std::fixed<<","<<m[_gIdx(i,j,k,nx,ny,nz)];
+        }
+        std::cout << "}";
+        if(j != ny-1)
+          std::cout << ",";
+      }
+      std::cout << "}";
+      if(i != nx-1)
+        std::cout<<',';
+    }
+    std::cout << "}";
+  }
+
+public:
+
+  // expose relax_t enum
+  typedef relax_t relax_t;
+
+  /**
+   * @brief Full Constructor
+   * @details Initialize internal variables, allocate memory
+   * 
+   * @param[in]  number grid points in x direction
+   * @param[in]  number grid points in y direction
+   * @param[in]  number grid points in z direction
+   * @param[in]  grid length in x direction
+   * @param[in]  grid length in y direction
+   * @param[in]  grid length in z direction
+   * @param[in]  number of multigrid layers
+   * @param[in]  maximum iterations when relaxing
+   * @param[in]  relaxation scheme (enum)
+   */
+  FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
+    REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
+    IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in)
+  {
+    _initializeMultigrid(grid_num_x_in, grid_num_y_in, grid_num_z_in,
+         grid_length_x_in, grid_length_y_in, grid_length_z_in,
+         max_depth_in, max_relax_iters_in, relax_scheme_in);
+  } // constructor
+
+  /**
+   * @brief Partial Constructor, with some defaults
+   * 
+   * @param[in]  number grid points in each direction
+   * @param[in]  grid length in each direction
+   * @param[in]  number of multigrid layers
+   */
+  FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in)
+  {
+    relax_t relax_scheme_in = relax_t::inexact_newton_constrained;
+    IDX_T max_relax_iters_in = 5;
+
+    _initializeMultigrid(
+      grid_num_in, grid_num_in, grid_num_in,
+      grid_length_in, grid_length_in, grid_length_in,
+      max_depth_in, max_relax_iters_in, relax_scheme_in
+    );
+  } // constructor
 
 
   /**
@@ -1121,8 +1211,8 @@ private:
   {
 
     // initial residual
-    _relaxSolution_GaussSeidel(max_depth, relax_iters);
-    //printStrip(u_h, max_depth);
+    _relaxSolution_GaussSeidel(max_depth, max_relax_iters);
+  
     std::cout << "  Initial max. residual on fine grid is: "
         << _getMaxResidual(max_depth) << ".\n" << std::flush;
 
@@ -1143,7 +1233,7 @@ private:
     for(coarse_depth = min_depth; coarse_depth < max_depth; coarse_depth++)
     {
       // relax "true" solution in u_h
-      _relaxSolution_GaussSeidel(coarse_depth, relax_iters);
+      _relaxSolution_GaussSeidel(coarse_depth, max_relax_iters);
       
       std::cout << "    Working on upward stroke at depth " << coarse_depth
     << "; residual after solving is: "
@@ -1158,10 +1248,9 @@ private:
     }
 
     // final relaxation
-    _relaxSolution_GaussSeidel(max_depth, relax_iters);
+    _relaxSolution_GaussSeidel(max_depth, max_relax_iters);
     std::cout << "  Final max. residual on fine grid is: "
         << _getMaxResidual(max_depth) << ".\n" << std::flush;
-    // std::cout << "  u (fine) slice is: "; printStrip(u_h, max_depth);
   }
 
   void VCycles(IDX_T num_cycles)
@@ -1176,11 +1265,9 @@ private:
         << _getMaxResidual(max_depth) << ".\n" << std::flush;
 
     if(_singularityExists(max_depth))
-      std::cout << "Warning! Solution crosses 0; solution may be singular at some points.\n";
+      std::cout << "  Warning! Solution crosses 0; solution may be singular at some points.\n";
     else
-      std::cout << "Solution stays positive or negative (no singularities seem to exist).\n";
-
-    printStrip(u_h, max_depth);
+      std::cout << "  Solution stays positive or negative (no singularities seem to exist).\n";
   }
 
   /**
@@ -1327,7 +1414,6 @@ private:
       }
 
       initializeRhoHeirarchy();
-      printStrip(u_h, max_depth);
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
         IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
@@ -1337,50 +1423,10 @@ private:
     
   }
 
-  
-  void printStrip(fas_heirarchy_t out_h, IDX_T depth)
+  void printSolutionStrip(IDX_T depth)
   {
-    IDX_T i;
-    IDX_T depth_idx = _dIdx(depth);
-    IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-    fas_grid_t const out = out_h[_dIdx(depth)];
-    std::cout << std::fixed << "Values: { ";
-    for(i=0; i<nx; i++)
-    {
-      IDX_T idx = _gIdx(i,nx/4,ny/4, nx, ny, nz);
-      std::cout << out[idx];
-      std::cout << ", ";
-    }
-    std::cout << "}\n";
-  }
-  void print_all(fas_heirarchy_t out_h, IDX_T depth)
-  {
-    IDX_T depth_idx = _dIdx(depth);
-    fas_grid_t const m = out_h[_dIdx(depth)];
-    IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-    std::cout << "{";
-    
-    for(int i = 0; i < nx; i++)
-    {
-      std::cout << "{";
-      for(int j = 0; j < ny; j++)
-      {
-        std::cout << "{";
-        std::cout<<std::fixed<<m[_gIdx(i,j,0,nx,ny,nz)];
-        for(int k = 1; k < nz; k++)
-        {
-          std::cout<<std::fixed<<","<<m[_gIdx(i,j,k,nx,ny,nz)];
-        }
-        std::cout << "}";
-        if(j != ny-1)
-          std::cout << ",";
-      }
-      std::cout << "}";
-      if(i != nx-1)
-        std::cout<<',';
-    }
-    std::cout << "}";
-  }
+    _printStrip(u_h, depth);
+  }  
 
 };
 
