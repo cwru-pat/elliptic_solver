@@ -317,6 +317,7 @@ private:
           fine_grid[_gIdx(fi-1,fj-1,fk+1,n_fine_x, n_fine_y, n_fine_z)] +
           fine_grid[_gIdx(fi-1,fj-1,fk-1,n_fine_x, n_fine_y, n_fine_z)]
         );
+
     } // end loop
   } // end restrict_fine2coarse
 
@@ -333,7 +334,6 @@ private:
 
     IDX_T n_coarse_x = nx_h[coarse_idx], n_coarse_y = ny_h[coarse_idx], n_coarse_z = nz_h[coarse_idx];
     IDX_T n_fine_x =  nx_h[fine_idx], n_fine_y = ny_h[fine_idx], n_fine_z = nz_h[fine_idx];
-  
     
     fas_grid_t const coarse_grid = grid_heirarchy[coarse_idx];
     fas_grid_t const fine_grid = grid_heirarchy[fine_idx];
@@ -343,97 +343,39 @@ private:
 
     _zeroGrid(fine_grid, n_fine_x * n_fine_y * n_fine_z);
 
-    #pragma omp parallel for default(shared) private(i,j,k)
-    FAS_LOOP3_N(i,j,k,n_coarse_x, n_coarse_y, n_coarse_z)
+    // No pragma: careful about race condition when parallelized
+    // TODO: figure out how to parallelize
+    FAS_LOOP3_N(i, j, k, n_coarse_x, n_coarse_y, n_coarse_z)
     {
       fi = i*2;
       fj = j*2;
       fk = k*2;
 
-      REAL_T cc = coarse_grid[_gIdx(i,j,k,n_coarse_x, n_coarse_y, n_coarse_z)];
-      fine_grid[_gIdx(fi,fj,fk,n_fine_x,n_fine_y,n_fine_z)] += cc;
+      REAL_T coarse_grid_val = coarse_grid[_gIdx(i,j,k,n_coarse_x, n_coarse_y, n_coarse_z)];
 
-      // adjacent "faces"
-      if(_gIdx(fi+1,fj,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
+      // loop over adjacent cells.
+      for( int i_adj = -1; i_adj <= 1; ++i_adj )
+        for( int j_adj = -1; j_adj <= 1; ++j_adj )
+          for( int k_adj = -1; k_adj <= 1; ++k_adj )
+          {
+            IDX_T fine_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+              n_fine_x, n_fine_y, n_fine_z);
+            IDX_T coarse_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+              n_coarse_x*2, n_coarse_y*2, n_coarse_z*2);
 
-      if(_gIdx(fi,fj+1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj+1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj+1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
+            if(i_adj == 0 && j_adj == 0 && k_adj == 0)
+            {
+              fine_grid[fine_grid_loc] += coarse_grid_val;
+            }
+            else if(fine_grid_loc == coarse_grid_loc)
+            {
+              REAL_T divisor = std::pow( 2.0, std::abs(i_adj) + std::abs(j_adj) + std::abs(k_adj) );
+              fine_grid[fine_grid_loc] += coarse_grid_val/divisor;
+            }
 
-      if(_gIdx(fi,fj,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
-
-      if(_gIdx(fi-1,fj,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
-
-      if(_gIdx(fi,fj-1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj-1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj-1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
-
-      if(_gIdx(fi,fj,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/2.0;
-
-      // adjacent "edges"
-      if(_gIdx(fi+1,fj+1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj+1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) ) 
-        fine_grid[_gIdx(fi+1,fj+1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi+1,fj-1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj-1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj-1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi-1,fj+1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj+1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj+1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi-1,fj-1,fk,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj-1,fk,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj-1,fk,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi+1,fj,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi+1,fj,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi-1,fj,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi-1,fj,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj+1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj+1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj-1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      if(_gIdx(fi,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi,fj-1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/4.0;
-
-      // adjacent "corners"
-      if(_gIdx(fi+1,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj+1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )          
-        fine_grid[_gIdx(fi+1,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi+1,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj+1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi+1,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj-1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi-1,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj+1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj+1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi+1,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi+1,fj-1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi+1,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi-1,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj+1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj+1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi-1,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj-1,fk+1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj-1,fk+1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
-
-      if(_gIdx(fi-1,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z) == _gIdx(fi-1,fj-1,fk-1,n_coarse_x*2,n_coarse_y*2,n_coarse_z*2) )
-        fine_grid[_gIdx(fi-1,fj-1,fk-1,n_fine_x,n_fine_y,n_fine_z)] += cc/8.0;
+          }
     }
+
   }
 
   /**
