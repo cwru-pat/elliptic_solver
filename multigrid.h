@@ -182,6 +182,7 @@ private:
   REAL_T _totalGrid(fas_grid_t grid, IDX_T points)
   {
     REAL_T total = 0;
+    #pragma omp parallel for reduction(+:total)
     for(IDX_T i=0; i < points; i++)
       total += grid[i];
     return total;
@@ -345,6 +346,13 @@ private:
 
     // No pragma: careful about race condition when parallelized
     // TODO: figure out how to parallelize
+
+    //#pragma omp parallel for default(shared) private(i,j,k)
+
+    
+    //IDX_T i_adj, j_adj, k_adj;
+    
+    #pragma omp parallel for private(i,j,k, fi, fj, fk)
     FAS_LOOP3_N(i, j, k, n_coarse_x, n_coarse_y, n_coarse_z)
     {
       fi = i*2;
@@ -354,23 +362,25 @@ private:
       REAL_T coarse_grid_val = coarse_grid[_gIdx(i,j,k,n_coarse_x, n_coarse_y, n_coarse_z)];
 
       // loop over adjacent cells.
-      for( int i_adj = -1; i_adj <= 1; ++i_adj )
-        for( int j_adj = -1; j_adj <= 1; ++j_adj )
-          for( int k_adj = -1; k_adj <= 1; ++k_adj )
+      for(IDX_T  i_adj = -1; i_adj <= 1; ++i_adj )
+        for(IDX_T  j_adj = -1; j_adj <= 1; ++j_adj )
+          for(IDX_T  k_adj = -1; k_adj <= 1; ++k_adj )
           {
-            IDX_T fine_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+             IDX_T fine_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
               n_fine_x, n_fine_y, n_fine_z);
-            IDX_T coarse_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+             IDX_T coarse_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
               n_coarse_x*2, n_coarse_y*2, n_coarse_z*2);
 
             if(i_adj == 0 && j_adj == 0 && k_adj == 0)
             {
+	       #pragma omp atomic
               fine_grid[fine_grid_loc] += coarse_grid_val;
             }
             else if(fine_grid_loc == coarse_grid_loc)
             {
               REAL_T divisor = std::pow( 2.0, std::abs(i_adj) + std::abs(j_adj) + std::abs(k_adj) );
-              fine_grid[fine_grid_loc] += coarse_grid_val/divisor;
+	       #pragma omp atomic
+	      fine_grid[fine_grid_loc] += coarse_grid_val/divisor;
             }
 
           }
@@ -731,6 +741,7 @@ private:
     fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
 
     REAL_T total = 0.0;
+    #pragma omp parallel for default(shared) private(i,j,k) reduction(+:total)
     FAS_LOOP3_N(i,j,k,nx,ny,nz)
     {
       IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
@@ -752,6 +763,7 @@ private:
 
 
     REAL_T total = 0.0;
+    #pragma omp parallel for default(shared) private(i,j,k) reduction(+:total)
     FAS_LOOP3_N(i,j,k,nx,ny,nz)
     {
       IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
@@ -900,7 +912,11 @@ private:
 
     for(s=0; s<max_iterations; ++s)
     {
-
+      temp = _getMaxResidual(depth);
+      //move this precision condition to the beginning in case
+      //perfect initial geuss causes infinite number of iterations for function: jac_relax() 
+      if(temp < 1e-6) // set presicion
+	break;
       if(relax_scheme == inexact_newton
           || relax_scheme == inexact_newton_constrained)
       {
@@ -948,10 +964,7 @@ private:
           u[idx] += damping_v[idx] * lambda;
         }
               
-        temp = _getMaxResidual(depth);
 
-        if(temp < 1e-6) // set presicion
-          break;
       }
       else if (relax_scheme == 2) // gauss-seidel
       {  
