@@ -906,7 +906,7 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
     _zeroGrid(damping_v_h[depth_idx], points);
   
     _zeroGrid(jac_rhs_h[depth_idx], points);
-  }   
+  }
 }
 
 void FASMultigrid::_printStrip(fas_heirarchy_t out_h, IDX_T depth)
@@ -996,6 +996,43 @@ FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_d
   );
 } // constructor
 
+
+/**
+ * @brief      destructor
+ */
+FASMultigrid::~FASMultigrid()
+{
+  for(IDX_T depth = max_depth; depth >= min_depth; --depth)
+  {
+    IDX_T depth_idx = _dIdx(depth);
+    
+    // just delete these for now; most of the memory is allocated in these
+    
+    delete [] u_h[depth_idx];
+    delete [] coarse_src_h[depth_idx];
+    delete [] tmp_h[depth_idx];
+    delete [] damping_tmp_h[depth_idx];
+    delete [] lap_v_h[depth_idx];
+    delete [] damping_v_h[depth_idx];
+    delete [] jac_rhs_h[depth_idx];
+
+    for( IDX_T I = 0; I < rho_num; I++)
+    {
+      delete [] rho_h[I][depth_idx];
+    }
+
+  }
+}
+
+
+void FASMultigrid::build_rho(IDX_T src_num_in, IDX_T * u_exp_in)
+{
+  build_rho(src_num_in);
+  for(IDX_T i = 0; i < src_num_in; ++i)
+  {
+    u_exp[i] = u_exp_in[i];
+  }
+}
 
 /**
  * @brief allocate the space of rho with src_num of sources
@@ -1133,7 +1170,7 @@ void FASMultigrid::setTrialSolution(IDX_T type)
       u[idx] = 2.0;
     }
   }
-  else if(type == 1 )
+  else if( type == 1 )
   {
     // frequency and phase of waves
     REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
@@ -1268,3 +1305,17 @@ void FASMultigrid::printSolutionStrip(IDX_T depth)
 {
   _printStrip(u_h, depth);
 }
+
+void FASMultigrid::setPolySrcAtPt(IDX_T i, IDX_T j, IDX_T k, IDX_T n, REAL_T value)
+{
+  IDX_T idx = _gIdx(i, j, k,
+    nx_h[max_depth_idx], ny_h[max_depth_idx], nz_h[max_depth_idx]);
+
+  rho_h[n][max_depth_idx][idx] = value;
+}
+
+REAL_T * FASMultigrid::getSolution()
+{
+  return u_h[max_depth_idx];
+}
+

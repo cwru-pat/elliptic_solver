@@ -244,6 +244,9 @@ public:
 
   FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in);
 
+  ~FASMultigrid();
+
+  void build_rho(IDX_T src_num_in, IDX_T * u_exp_in);
   void build_rho(IDX_T src_num);
   void initializeRhoHeirarchy();
 
@@ -254,6 +257,10 @@ public:
   void add_poly_srcs(IDX_T type);
 
   void printSolutionStrip(IDX_T depth);
+
+  void setPolySrcAtPt(IDX_T i, IDX_T j, IDX_T k, IDX_T n, REAL_T value);
+
+  REAL_T * getSolution();
 
 };
 
