@@ -4,6 +4,7 @@
 #include <omp.h>
 #include <algorithm>
 #include <iostream>
+#include <iomanip>
 #include <cmath>
 #include <cstdio>
 
@@ -15,7 +16,7 @@
       for(k=0; k<nz; ++k)
 
 typedef double REAL_T;
-typedef long long IDX_T;
+typedef long int IDX_T;
 
 /**
  * @brief Full Approximation Storage ("FAS") Multigrid solver class
@@ -246,7 +247,7 @@ public:
 
   ~FASMultigrid();
 
-  void build_rho(IDX_T src_num_in, IDX_T * u_exp_in);
+  void build_rho(IDX_T src_num_in, IDX_T u_exp_in[]);
   void build_rho(IDX_T src_num);
   void initializeRhoHeirarchy();
 
@@ -257,6 +258,7 @@ public:
   void add_poly_srcs(IDX_T type);
 
   void printSolutionStrip(IDX_T depth);
+  void printSourceStrip(IDX_T rho_n, IDX_T depth);
 
   void setPolySrcAtPt(IDX_T i, IDX_T j, IDX_T k, IDX_T n, REAL_T value);
 

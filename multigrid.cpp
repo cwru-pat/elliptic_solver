@@ -6,7 +6,7 @@
  * 
  * @param index of position
  * @param index of depth
- * @param the value of 
+ * @param the value of u
  */
 REAL_T FASMultigrid::_srcVal(IDX_T pos_idx, IDX_T depth_idx, REAL_T u)
 {
@@ -915,7 +915,7 @@ void FASMultigrid::_printStrip(fas_heirarchy_t out_h, IDX_T depth)
   IDX_T depth_idx = _dIdx(depth);
   IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
   fas_grid_t const out = out_h[_dIdx(depth)];
-  std::cout << std::fixed << "Values: { ";
+  std::cout << std::fixed << std::setprecision(15) << "Values: { ";
   for(i=0; i<nx; i++)
   {
     IDX_T idx = _gIdx(i,nx/4,ny/4, nx, ny, nz);
@@ -1025,7 +1025,7 @@ FASMultigrid::~FASMultigrid()
 }
 
 
-void FASMultigrid::build_rho(IDX_T src_num_in, IDX_T * u_exp_in)
+void FASMultigrid::build_rho(IDX_T src_num_in, IDX_T u_exp_in[])
 {
   build_rho(src_num_in);
   for(IDX_T i = 0; i < src_num_in; ++i)
@@ -1041,7 +1041,6 @@ void FASMultigrid::build_rho(IDX_T src_num_in, IDX_T * u_exp_in)
  */  
 void FASMultigrid::build_rho(IDX_T src_num)
 {
-  
   rho_num = src_num;
   rho_h = new  fas_heirarchy_t[rho_num];
   u_exp = new IDX_T[rho_num];
@@ -1304,6 +1303,11 @@ void FASMultigrid::add_poly_srcs(IDX_T type)
 void FASMultigrid::printSolutionStrip(IDX_T depth)
 {
   _printStrip(u_h, depth);
+}
+
+void FASMultigrid::printSourceStrip(IDX_T rho_n, IDX_T depth)
+{
+  _printStrip(rho_h[rho_n], depth);
 }
 
 void FASMultigrid::setPolySrcAtPt(IDX_T i, IDX_T j, IDX_T k, IDX_T n, REAL_T value)
