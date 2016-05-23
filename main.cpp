@@ -4,24 +4,21 @@
 
 typedef double real_t;
 typedef long int idx_t;
-typedef FASMultigrid<real_t, idx_t> multigrid_t;
+typedef FASMultigrid multigrid_t;
 
 int main(int argc, char **argv)
 {
    
   srand(129);
   std::cout.precision(15);
-  
-  #ifdef _OPENMP
-    omp_set_num_threads(4);
-  #endif
- 
+
   std::cout << "Creating multigrid class...\n";
 
   real_t grid_length = 1.0;
   idx_t max_relax_iters = 5;
 
-  multigrid_t::relax_t relax_scheme = multigrid_t::relax_t::inexact_newton_constrained;
+  multigrid_t::relax_t relax_scheme
+    = multigrid_t::relax_t::inexact_newton_constrained;
 
   idx_t grid_length_x = 1, grid_length_y = 1, grid_length_z = 1;
 
