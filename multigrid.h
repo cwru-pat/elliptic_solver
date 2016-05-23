@@ -344,13 +344,7 @@ private:
 
     _zeroGrid(fine_grid, n_fine_x * n_fine_y * n_fine_z);
 
-    // No pragma: careful about race condition when parallelized
-    // TODO: figure out how to parallelize
 
-    //#pragma omp parallel for default(shared) private(i,j,k)
-
-    
-    //IDX_T i_adj, j_adj, k_adj;
     
     #pragma omp parallel for private(i,j,k, fi, fj, fk)
     FAS_LOOP3_N(i, j, k, n_coarse_x, n_coarse_y, n_coarse_z)
@@ -366,20 +360,20 @@ private:
         for(IDX_T  j_adj = -1; j_adj <= 1; ++j_adj )
           for(IDX_T  k_adj = -1; k_adj <= 1; ++k_adj )
           {
-             IDX_T fine_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+            IDX_T fine_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
               n_fine_x, n_fine_y, n_fine_z);
-             IDX_T coarse_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
+            IDX_T coarse_grid_loc = _gIdx(fi + i_adj, fj + j_adj, fk + k_adj,
               n_coarse_x*2, n_coarse_y*2, n_coarse_z*2);
 
             if(i_adj == 0 && j_adj == 0 && k_adj == 0)
             {
-	       #pragma omp atomic
+	      #pragma omp atomic
               fine_grid[fine_grid_loc] += coarse_grid_val;
             }
             else if(fine_grid_loc == coarse_grid_loc)
             {
               REAL_T divisor = std::pow( 2.0, std::abs(i_adj) + std::abs(j_adj) + std::abs(k_adj) );
-	       #pragma omp atomic
+	      #pragma omp atomic
 	      fine_grid[fine_grid_loc] += coarse_grid_val/divisor;
             }
 
