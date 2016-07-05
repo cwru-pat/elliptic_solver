@@ -54,10 +54,10 @@ void FASMultigrid::_zeroGrid(fas_grid_t grid, IDX_T points)
 /**
  * @brief Compute total of grid (sum of all elements)
  * 
- * @param grid [description]
+ * @param grid grid to total
  * @param points # points in grid
  * 
- * @return [description]
+ * @return total
  */
 REAL_T FASMultigrid::_totalGrid(fas_grid_t grid, IDX_T points)
 {
@@ -65,7 +65,65 @@ REAL_T FASMultigrid::_totalGrid(fas_grid_t grid, IDX_T points)
   #pragma omp parallel for reduction(+:total)
   for(IDX_T i=0; i < points; i++)
     total += grid[i];
+
   return total;
+}
+
+/**
+ * @brief Compute average of a grid
+ * 
+ * @param grid grid to average
+ * @param points # points in grid
+ * 
+ * @return average
+ */
+REAL_T FASMultigrid::_averageGrid(fas_grid_t grid, IDX_T points)
+{
+  return _totalGrid(grid, points)/points;
+}
+
+/**
+ * @brief Compute max value in a grid
+ * 
+ * @param grid grid to find max of
+ * @param points # points in grid
+ * 
+ * @return max
+ */
+REAL_T FASMultigrid::_maxGrid(fas_grid_t grid, IDX_T points)
+{
+  REAL_T max = grid[0];
+  #pragma omp parallel for
+  for(IDX_T i=0; i < points; i++)
+    #pragma omp critical
+    {
+      if(grid[i] > max)
+        max = grid[i];
+    }
+
+  return max;
+}
+
+/**
+ * @brief Compute min value in a grid
+ * 
+ * @param grid grid to find min of
+ * @param points # points in grid
+ * 
+ * @return min
+ */
+REAL_T FASMultigrid::_minGrid(fas_grid_t grid, IDX_T points)
+{
+  REAL_T min = grid[0];
+  #pragma omp parallel for
+  for(IDX_T i=0; i < points; i++)
+    #pragma omp critical
+    {
+      if(grid[i] < min)
+        min = grid[i];
+    }
+
+  return min;
 }
 
 /**
@@ -833,6 +891,13 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
 {
   IDX_T depth_idx, points;
 
+  relax_scheme = relax_scheme_in;
+  max_relax_iters = max_relax_iters_in;
+  max_depth = max_depth_in;
+  min_depth = 1;
+  max_depth_idx = _dIdx(max_depth);
+  min_depth_idx = _dIdx(min_depth);
+
   if( grid_num_x_in % _2toPwr(max_depth) != 0
     || grid_num_y_in % _2toPwr(max_depth) != 0
     || grid_num_z_in % _2toPwr(max_depth) != 0)
@@ -840,13 +905,6 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
     std::cout << "Warning: Grid size is not divisible by 2^"
       << max_depth << ".\n";
   }
- 
-  relax_scheme = relax_scheme_in;
-  max_relax_iters = max_relax_iters_in;
-  max_depth = max_depth_in;
-  min_depth = 1;
-  max_depth_idx = _dIdx(max_depth);
-  min_depth_idx = _dIdx(min_depth);
 
   total_depths = max_depth - min_depth + 1;
   grid_length_x = grid_length_x_in;
@@ -1132,9 +1190,18 @@ void FASMultigrid::VCycles(IDX_T num_cycles)
     VCycle();
   }
 
+  IDX_T fine_idx = _dIdx(max_depth);
+  IDX_T n_fine_x = nx_h[fine_idx], n_fine_y = ny_h[fine_idx], n_fine_z = nz_h[fine_idx];
+  fas_grid_t const fine_u = u_h[fine_idx];
+  REAL_T avg_sol = _averageGrid(fine_u, n_fine_x * n_fine_y * n_fine_z);
+  REAL_T min_sol = _minGrid(fine_u, n_fine_x * n_fine_y * n_fine_z);
+  REAL_T max_sol = _maxGrid(fine_u, n_fine_x * n_fine_y * n_fine_z);
+
   _relaxSolution_GaussSeidel(max_depth, 10);
   std::cout << "  Final solution residual is: "
-      << _getMaxResidual(max_depth) << ".\n" << std::flush;
+      << _getMaxResidual(max_depth) << "\n" << std::flush;
+  std::cout << "  With average / min / max phi: "
+      << avg_sol << " / " << min_sol << " / " << max_sol << ".\n" << std::flush;
 
   if(_singularityExists(max_depth))
     std::cout << "  Warning! Solution crosses 0; solution may be singular at some points.\n";

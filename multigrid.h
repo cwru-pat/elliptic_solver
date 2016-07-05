@@ -175,6 +175,11 @@ protected:
     );
   }
 
+  REAL_T _averageGrid(fas_grid_t grid, IDX_T points);
+  REAL_T _maxGrid(fas_grid_t grid, IDX_T points);
+  REAL_T _minGrid(fas_grid_t grid, IDX_T points);
+
+
   REAL_T _srcVal(IDX_T pos_idx, IDX_T depth_idx, REAL_T u);
   REAL_T _srcValDir(IDX_T pos_idx, IDX_T depth_idx, REAL_T u);
 
