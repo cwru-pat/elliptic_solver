@@ -166,13 +166,36 @@ protected:
     REAL_T dx = grid_length_x/nx, dy = grid_length_y/ny, dz = grid_length_z/nz;
 
     return (
-      (grid[_gIdx(i+1, j, k, nx, ny, nz)] + grid[_gIdx(i-1, j, k, nx, ny, nz)]
-        - 2.0 * grid[_gIdx(i, j, k, nx, ny, nz)] ) / (dx*dx)
-      + (grid[_gIdx(i, j+1, k, nx, ny, nz)] + grid[_gIdx(i, j-1, k, nx, ny, nz)]
-       - 2.0 * grid[_gIdx(i, j, k, nx, ny, nz)] ) / (dy*dy)
-      + (grid[_gIdx(i, j, k+1, nx, ny, nz)] + grid[_gIdx(i, j, k-1, nx, ny, nz)]
-       - 2.0 * grid[_gIdx(i, j, k, nx, ny, nz)] ) / (dz*dz)
-    );
+      - 1.0/560.0*grid[_gIdx(i-4,j,k,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i-3,j,k,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i-2,j,k,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i-1,j,k,nx,ny,nz)]
+      - 205.0/72.0*grid[_gIdx(i-0,j,k,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i+1,j,k,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i+2,j,k,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i+3,j,k,nx,ny,nz)]
+      - 1.0/560.0*grid[_gIdx(i+4,j,k,nx,ny,nz)]
+    )/dx/dx + (
+      - 1.0/560.0*grid[_gIdx(i,j-4,k,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i,j-3,k,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i,j-2,k,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i,j-1,k,nx,ny,nz)]
+      - 205.0/72.0*grid[_gIdx(i,j-0,k,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i,j+1,k,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i,j+2,k,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i,j+3,k,nx,ny,nz)]
+      - 1.0/560.0*grid[_gIdx(i,j+4,k,nx,ny,nz)]
+    )/dy/dy + (
+      - 1.0/560.0*grid[_gIdx(i,j,k-4,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i,j,k-3,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i,j,k-2,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i,j,k-1,nx,ny,nz)]
+      - 205.0/72.0*grid[_gIdx(i,j,k-0,nx,ny,nz)]
+      + 8.0/5.0*grid[_gIdx(i,j,k+1,nx,ny,nz)]
+      - 1.0/5.0*grid[_gIdx(i,j,k+2,nx,ny,nz)]
+      + 8.0/315.0*grid[_gIdx(i,j,k+3,nx,ny,nz)]
+      - 1.0/560.0*grid[_gIdx(i,j,k+4,nx,ny,nz)]
+    )/dz/dz;
   }
 
   REAL_T _averageGrid(fas_grid_t grid, IDX_T points);
