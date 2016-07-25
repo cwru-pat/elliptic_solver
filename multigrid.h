@@ -52,7 +52,7 @@ protected:
   
   REAL_T grid_length_x, grid_length_y, grid_length_z;
   IDX_T * nx_h, * ny_h, * nz_h; // grid points in each direction at different depths
-
+  REAL_T relaxation_precision; //jump precision when doing relaxation
   // grid (array) type
   typedef REAL_T * fas_grid_t;
   // heirarchy type (set of some grids at different depths)
@@ -255,7 +255,8 @@ protected:
 
   void _initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
          REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-         IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in);
+	    IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in,
+	       REAL_T eps);
 
   void _printStrip(fas_heirarchy_t out_h, IDX_T depth);
 
@@ -269,9 +270,10 @@ public:
 
   FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
     REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-    IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in);
+	       IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in,
+	       REAL_T eps);
 
-  FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in);
+  FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in, REAL_T eps);
 
   ~FASMultigrid();
 

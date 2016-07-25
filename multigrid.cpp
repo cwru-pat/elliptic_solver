@@ -799,8 +799,8 @@ void FASMultigrid::_relaxSolution_GaussSeidel(IDX_T depth, IDX_T max_iterations)
     temp = _getMaxResidual(depth);
     // move this precision condition to the beginning in case
     // perfect initial geuss causes infinite number of
-    // iterations for function: _jacobianRelax() 
-    if(temp < 1e-6) // set precision
+    // iterations for function: _jacobianRelax()
+    if(temp < relaxation_precision) // set precision
       break;
 
     if(relax_scheme == inexact_newton
@@ -887,7 +887,7 @@ void FASMultigrid::_relaxSolution_GaussSeidel(IDX_T depth, IDX_T max_iterations)
  */
 void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
        REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-       IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in)
+					IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in, REAL_T eps)
 {
   IDX_T depth_idx, points;
 
@@ -897,7 +897,8 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
   min_depth = 1;
   max_depth_idx = _dIdx(max_depth);
   min_depth_idx = _dIdx(min_depth);
-
+  relaxation_precision = eps;
+  
   if( grid_num_x_in % _2toPwr(max_depth) != 0
     || grid_num_y_in % _2toPwr(max_depth) != 0
     || grid_num_z_in % _2toPwr(max_depth) != 0)
@@ -1028,11 +1029,11 @@ void FASMultigrid::_printAll(fas_heirarchy_t out_h, IDX_T depth)
  */
 FASMultigrid::FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
   REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-  IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in)
+			   IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in, REAL_T eps)
 {
   _initializeMultigrid(grid_num_x_in, grid_num_y_in, grid_num_z_in,
        grid_length_x_in, grid_length_y_in, grid_length_z_in,
-       max_depth_in, max_relax_iters_in, relax_scheme_in);
+		       max_depth_in, max_relax_iters_in, relax_scheme_in, eps);
 } // constructor
 
 /**
@@ -1042,7 +1043,7 @@ FASMultigrid::FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_
  * @param[in]  grid length in each direction
  * @param[in]  number of multigrid layers
  */
-FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in)
+FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in, REAL_T eps)
 {
   relax_t relax_scheme_in = relax_t::inexact_newton_constrained;
   IDX_T max_relax_iters_in = 5;
@@ -1050,7 +1051,7 @@ FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_d
   _initializeMultigrid(
     grid_num_in, grid_num_in, grid_num_in,
     grid_length_in, grid_length_in, grid_length_in,
-    max_depth_in, max_relax_iters_in, relax_scheme_in
+    max_depth_in, max_relax_iters_in, relax_scheme_in, eps
   );
 } // constructor
 
