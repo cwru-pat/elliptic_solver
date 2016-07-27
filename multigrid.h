@@ -52,7 +52,7 @@ protected:
   
   REAL_T grid_length_x, grid_length_y, grid_length_z;
   IDX_T * nx_h, * ny_h, * nz_h; // grid points in each direction at different depths
-  REAL_T relaxation_precision; //jump precision when doing relaxation
+  REAL_T relaxation_tolerance; //jump precision when doing relaxation
   // grid (array) type
   typedef REAL_T * fas_grid_t;
   // heirarchy type (set of some grids at different depths)

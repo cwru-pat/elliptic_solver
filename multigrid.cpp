@@ -800,7 +800,7 @@ void FASMultigrid::_relaxSolution_GaussSeidel(IDX_T depth, IDX_T max_iterations)
     // move this precision condition to the beginning in case
     // perfect initial geuss causes infinite number of
     // iterations for function: _jacobianRelax()
-    if(temp < relaxation_precision) // set precision
+    if(temp < relaxation_tolerance) // set precision
       break;
 
     if(relax_scheme == inexact_newton
@@ -897,7 +897,7 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
   min_depth = 1;
   max_depth_idx = _dIdx(max_depth);
   min_depth_idx = _dIdx(min_depth);
-  relaxation_precision = eps;
+  relaxation_tolerance = eps;
   
   if( grid_num_x_in % _2toPwr(max_depth) != 0
     || grid_num_y_in % _2toPwr(max_depth) != 0
