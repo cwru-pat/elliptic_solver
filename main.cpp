@@ -14,8 +14,8 @@ int main(int argc, char **argv)
 
   std::cout << "Creating multigrid class...\n";
 
-  real_t grid_length = 1.0;
   idx_t max_relax_iters = 5;
+  idx_t relaxation_tolerance = 1e-7;
 
   multigrid_t::relax_t relax_scheme
     = multigrid_t::relax_t::inexact_newton_constrained;
@@ -32,8 +32,8 @@ int main(int argc, char **argv)
   multigrid_t multigrid (
     grid_num_x, grid_num_y, grid_num_z,
     grid_length_x, grid_length_y, grid_length_z,
-    max_depth,
-    max_relax_iters, relax_scheme);
+    max_depth, max_relax_iters, relax_scheme,
+    relaxation_tolerance);
 
   std::cout << "  initializing...\n";
   multigrid.setTrialSolution(0);
@@ -46,5 +46,5 @@ int main(int argc, char **argv)
   
   multigrid.printSolutionStrip(max_depth);
 
-  exit(EXIT_SUCCESS);
+  return EXIT_SUCCESS;
 }

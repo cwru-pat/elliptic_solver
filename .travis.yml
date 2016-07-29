@@ -1,0 +1,17 @@
+
+language: cpp
+sudo: required
+dist: trusty
+
+git:
+  submodules: false
+
+install:
+ - pwd
+ - gcc --version
+ - g++ --version
+
+before_script:
+ - export OMP_NUM_THREADS=4
+
+script: ./run_tests.sh

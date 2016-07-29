@@ -51,37 +51,37 @@ protected:
   IDX_T total_depths, max_relax_iters;
   
   REAL_T grid_length_x, grid_length_y, grid_length_z;
-  IDX_T * nx_h, * ny_h, * nz_h; // grid points in each direction at different depths
-  REAL_T relaxation_tolerance; //truncate precision when doing relaxation
+  IDX_T * nx_h, * ny_h, * nz_h; ///< number of grid points in each direction at different depths
+  REAL_T relaxation_tolerance; ///< desired precision when performing relaxation
   // grid (array) type
   typedef REAL_T * fas_grid_t;
   // heirarchy type (set of some grids at different depths)
   typedef fas_grid_t * fas_heirarchy_t;
   // set of heirarchies
   typedef fas_heirarchy_t * fas_heirarchy_set_t;
+
   // enum for relaxation type
   enum relax_t { 
     inexact_newton,
     inexact_newton_constrained, // inexact Newton with volume constraint enforced
     newton
   };
-
   relax_t relax_scheme;
 
   // define heirarchy of references to grids
-  fas_heirarchy_t tmp_h,  // reusable grid for storing intermediate calculations
-    coarse_src_h,         // multigrid source term
-    u_h,                  // field seeking a solution for
-    appx_u_h,             // field containing an approximate solution
-    damping_tmp_h,        // _lap (u) - f, used to calculate F(u + \lambda v)
-    lap_v_h,              // _lap(v), used to caculate F(u + \lambda v)
-    damping_v_h,          // v, used to update u through u_{n+1} = u{n} + v in interation
-    jac_rhs_h;            // - F(u) which is rhs of Jacob Linear function
+  fas_heirarchy_t tmp_h,  ///< reusable grid for storing intermediate calculations
+    coarse_src_h,         ///< multigrid source term
+    u_h,                  ///< field seeking a solution for
+    appx_u_h,             ///< field containing an approximate solution
+    damping_tmp_h,        ///< _lap (u) - f, used to calculate F(u + \lambda v)
+    lap_v_h,              ///< _lap(v), used to caculate F(u + \lambda v)
+    damping_v_h,          ///< v, used to update u through u_{n+1} = u{n} + v in interation
+    jac_rhs_h;            ///< - F(u) which is rhs of Jacob Linear function
   
   // source terms: u^u_exp * rho
-  IDX_T rho_num; // number of source terms
-  IDX_T * u_exp; // exponent of u for each term, has rho_num terms in total 
-  fas_heirarchy_set_t rho_h; // source matter terms with number being rho_num;
+  IDX_T rho_num; ///< number of source terms
+  IDX_T * u_exp; ///< exponent of u for each term, has rho_num terms in total 
+  fas_heirarchy_set_t rho_h; ///< source matter terms with number being rho_num;
 
   /**
    * @brief indexing scheme of a grid heirarchy

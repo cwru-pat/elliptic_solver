@@ -1,10 +1,10 @@
 # Elliptic Solver Code
 
 Example compile && run command:
-> `g++ main.cpp multigrid.cpp -O3 -w --std=c++11 -fopenmp && time ./a.out`
+> `g++ main.cpp multigrid.cpp -O3 -Wall --std=c++11 -fopenmp && time ./a.out`
 
 Example compile && run with profiling enabled (not parallelized):
-> `g++ main.cpp multigrid.cpp -O3 -w --std=c++11 -pg && time ./a.out`
+> `g++ main.cpp multigrid.cpp -O3 -Wall --std=c++11 -pg && time ./a.out`
 
 View profiling:
 > `gprof a.out | less`

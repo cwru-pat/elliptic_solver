@@ -370,8 +370,6 @@ REAL_T FASMultigrid::_monopoleConstraintDerivativeTotal(IDX_T depth, REAL_T shif
 
   fas_grid_t const u = u_h[depth_idx];
 
-  fas_grid_t const coarse_src = coarse_src_h[depth_idx];
-
   REAL_T total = 0.0;
   #pragma omp parallel for default(shared) private(i,j,k) reduction(+:total)
   FAS_LOOP3_N(i,j,k,nx,ny,nz)
@@ -395,8 +393,6 @@ void FASMultigrid::_computeResidual(fas_heirarchy_t residual_h, IDX_T depth)
   IDX_T i, j, k;
   IDX_T depth_idx = _dIdx(depth);
   IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-
-  fas_grid_t const u = u_h[depth_idx];
 
   fas_grid_t const coarse_src = coarse_src_h[depth_idx];
   fas_grid_t const residual = residual_h[depth_idx];
@@ -662,10 +658,9 @@ REAL_T FASMultigrid::_dampingConstraintDerivativeTotal(IDX_T depth, REAL_T shift
  */
 void FASMultigrid::_shiftConstrainedDamping(IDX_T depth) 
 {
-  
   //shift the Jacob equation to satisy constraint, sometime does not helpful
-  REAL_T eps = 0.0, shift = 0.0;
-  REAL_T num, den, cnt=0;
+  REAL_T shift = 0.0;
+  REAL_T num, den;
   
   num = _dampingConstraintTotal(depth, 0.0);
   den = _dampingConstraintDerivativeTotal(depth, 0.0);
@@ -688,7 +683,7 @@ void FASMultigrid::_shiftConstrainedDamping(IDX_T depth)
 bool FASMultigrid::_jacobianRelax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
 {
   // C and p set the convergent speed of interation
-  IDX_T i, j, k, s;
+  IDX_T i, j, k;
   IDX_T depth_idx = _dIdx(depth);
   IDX_T nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx], cnt = 0;
 
@@ -699,7 +694,6 @@ bool FASMultigrid::_jacobianRelax(IDX_T depth, REAL_T norm, REAL_T C, IDX_T p)
   fas_grid_t const u = u_h[depth_idx];
   fas_grid_t const damping_v = damping_v_h[depth_idx];
   fas_grid_t const jac_rhs = jac_rhs_h[depth_idx];
-  fas_grid_t const coarse_src = coarse_src_h[depth_idx];
 
   #pragma omp parallel for default(shared) private(i,j,k)
   FAS_LOOP3_N(i, j, k, nx, ny, nz)
@@ -885,9 +879,11 @@ void FASMultigrid::_relaxSolution_GaussSeidel(IDX_T depth, IDX_T max_iterations)
  * @param[in]  maximum iterations when relaxing
  * @param[in]  relaxation scheme (enum)
  */
-void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
-       REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-					IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in, REAL_T eps)
+void FASMultigrid::_initializeMultigrid(
+  IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
+  REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
+  IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in,
+  REAL_T relaxation_tolerance_in)
 {
   IDX_T depth_idx, points;
 
@@ -897,7 +893,7 @@ void FASMultigrid::_initializeMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in
   min_depth = 1;
   max_depth_idx = _dIdx(max_depth);
   min_depth_idx = _dIdx(min_depth);
-  relaxation_tolerance = eps;
+  relaxation_tolerance = relaxation_tolerance_in;
   
   if( grid_num_x_in % _2toPwr(max_depth) != 0
     || grid_num_y_in % _2toPwr(max_depth) != 0
@@ -1027,13 +1023,17 @@ void FASMultigrid::_printAll(fas_heirarchy_t out_h, IDX_T depth)
  * @param[in]  maximum iterations when relaxing
  * @param[in]  relaxation scheme (enum)
  */
-FASMultigrid::FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
+FASMultigrid::FASMultigrid(
+  IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_num_z_in,
   REAL_T grid_length_x_in, REAL_T grid_length_y_in, REAL_T grid_length_z_in,
-			   IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in, REAL_T eps)
+  IDX_T max_depth_in, IDX_T max_relax_iters_in, relax_t relax_scheme_in,
+  REAL_T relaxation_tolerance_in)
 {
   _initializeMultigrid(grid_num_x_in, grid_num_y_in, grid_num_z_in,
-       grid_length_x_in, grid_length_y_in, grid_length_z_in,
-		       max_depth_in, max_relax_iters_in, relax_scheme_in, eps);
+    grid_length_x_in, grid_length_y_in, grid_length_z_in,
+    max_depth_in, max_relax_iters_in, relax_scheme_in,
+    relaxation_tolerance_in
+  );
 } // constructor
 
 /**
@@ -1043,7 +1043,8 @@ FASMultigrid::FASMultigrid(IDX_T grid_num_x_in, IDX_T grid_num_y_in, IDX_T grid_
  * @param[in]  grid length in each direction
  * @param[in]  number of multigrid layers
  */
-FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_depth_in, REAL_T eps)
+FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in,
+  IDX_T max_depth_in, REAL_T relaxation_tolerance_in)
 {
   relax_t relax_scheme_in = relax_t::inexact_newton_constrained;
   IDX_T max_relax_iters_in = 5;
@@ -1051,7 +1052,8 @@ FASMultigrid::FASMultigrid(IDX_T grid_num_in, REAL_T grid_length_in, IDX_T max_d
   _initializeMultigrid(
     grid_num_in, grid_num_in, grid_num_in,
     grid_length_in, grid_length_in, grid_length_in,
-    max_depth_in, max_relax_iters_in, relax_scheme_in, eps
+    max_depth_in, max_relax_iters_in, relax_scheme_in,
+    relaxation_tolerance_in
   );
 } // constructor
 
@@ -1125,8 +1127,6 @@ void FASMultigrid::build_rho(IDX_T src_num)
  */
 void FASMultigrid::initializeRhoHeirarchy()
 {
-  // initialize values on fine grid
-  IDX_T points = nx_h[_dIdx(max_depth)] * ny_h[_dIdx(max_depth)] * nz_h[_dIdx(max_depth)];
   // restrict supplied rho to coarser grids
   for(IDX_T I = 0; I < rho_num; I++)
   {
@@ -1137,7 +1137,7 @@ void FASMultigrid::initializeRhoHeirarchy()
   }
 }
   
-  
+
 void FASMultigrid::VCycle()
 {
 
@@ -1225,12 +1225,7 @@ void FASMultigrid::setTrialSolution(IDX_T type)
 
   if(type == 0)
   {
-    // frequency and phase of waves
-    REAL_T n1 = 1.0, n2 = 1.0, n3 = 1.0;
-    REAL_T phi1 = 0, phi2 = 0, phi3 = 0;
-
-    // generate trial solution u
-  
+    // generate trial solution u  
     FAS_LOOP3_N(i,j,k,nx,ny,nz)
     {
       IDX_T idx = _gIdx(i,j,k,nx,ny,nz);
@@ -1312,7 +1307,6 @@ void FASMultigrid::add_poly_srcs(IDX_T type)
     u_exp[1] = 5;
     FAS_LOOP3_N(i, j, k, nx, ny, nz)
     {
-      IDX_T idx = _gIdx(i, j, k, nx, ny, nz);
       K += Lambda * dx * dy * dz/ 4.0 + (
         _Pwr2( delta_phi* 2.0 * PI /(grid_length_x) )
           * _Pwr2( -std::sin(2.0 * PI *(REAL_T)i * dx / grid_length_x
