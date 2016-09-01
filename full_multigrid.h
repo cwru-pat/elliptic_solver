@@ -201,7 +201,7 @@ class FASMultigrid
 
   void _relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations);
 
-  void _printStrip(fas_heirarchy_set_t out_h, idx_t eqn_id, idx_t depth);
+  void _printStrip(fas_grid_t & out_h);
 
   void build_rho();
 

@@ -164,7 +164,6 @@ real_t FASMultigrid::_evaluateEllipticEquationPt(idx_t eqn_id, idx_t depth_idx, 
   for(idx_t mol_id = 0; mol_id < molecule_n[eqn_id]; mol_id++)
   {
     real_t val = 1.0;
-    //    std::cout<<mol_id<<"\n";
     for(idx_t atom_id = 0; atom_id < eqns[eqn_id][mol_id].atom_n; atom_id++)
     {
       atom & ad = eqns[eqn_id][mol_id].atoms[atom_id];
@@ -339,7 +338,7 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
       {
 	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
 	fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
-        if(eqn_id == ad.u_id)
+        if(u_id == ad.u_id)
 	{
 	  der_val = non_der_val * ad.value * pow(vd[pos_idx], ad.value-1.0) * jac_vd[pos_idx]
 	    + der_val * pow(vd[pos_idx], ad.value);
@@ -357,7 +356,7 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
       {
 	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
 	fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
-	if(eqn_id == ad.u_id)
+	if(u_id == ad.u_id)
 	{
 	  der_val = non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], jac_vd)
 	    + der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
@@ -372,10 +371,10 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
       }
       else if(ad.type <= 10)
       {
-	      fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
 
-	if(eqn_id == ad.u_id)
+	if(u_id == ad.u_id)
 	{
 	  der_val = non_der_val *  double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], jac_vd)
 	    + der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd); 
@@ -704,7 +703,7 @@ void FASMultigrid::_correctFineFromCoarseErr_Err2Appx(fas_heirarchy_t err2appx_h
   idx_t coarse_depth = fine_depth-1;
 
   idx_t fine_depth_idx = _dIdx(fine_depth);
-  //IDX_T n_fine = _2toPwr(fine_depth);
+
   idx_t n_fine_x = nx_h[fine_depth_idx], n_fine_y = ny_h[fine_depth_idx], n_fine_z = nz_h[fine_depth_idx];
   _interpolateCoarse2fine(err2appx_h, coarse_depth);
 
@@ -819,37 +818,37 @@ bool FASMultigrid::_jacobianRelax( idx_t depth, real_t norm, real_t C, idx_t p)
     {
       fas_grid_t & damping_v = damping_v_h[eqn_id][depth_idx];
       fas_grid_t & jac_rhs = jac_rhs_h[eqn_id][depth_idx];
-        FAS_LOOP3_N(i,j,k,nx,ny,nz)
-      {
-	idx_t idx = H_INDEX(i,j,k,nx,ny,nz);
-	for(idx_t u_id = 0; u_id < u_n; u_id++)
-	{
-	  real_t coef_a =0, coef_b = 0;
-	  _evaluateIterationForJacEquation(eqn_id, depth_idx, coef_a, coef_b, i, j, k, u_id);
-	  //	std::cout<<coef_a<<" "<<coef_b<<"\n";
-	  real_t temp = 0;
-	  for(idx_t u_id_o = 0; u_id_o < u_n; u_id_o++)
-	  {
-	    if(u_id_o != u_id)
-	      temp += _evaluateDerEllipticEquation(eqn_id, depth_idx, i, j, k, u_id_o);
-	  }
-	  
-	  damping_v[idx] = (coef_a - jac_rhs[idx] + temp)/ (-coef_b);
-	  
-	}
-      }
 
-      #pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm_r)
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
+	idx_t idx = H_INDEX(i,j,k,nx,ny,nz);
+	real_t coef_a =0, coef_b = 0, temp = 0;
+	_evaluateIterationForJacEquation(eqn_id, depth_idx, coef_a, coef_b, i, j, k, eqn_id);
+	for(idx_t u_id = 0; u_id < u_n; u_id++)
+	{
+	  
+	  if(u_id != eqn_id)
+	    temp += _evaluateDerEllipticEquation(eqn_id, depth_idx, i, j, k, u_id);
+	}
+	damping_v[idx] = (coef_a - jac_rhs[idx] + temp)/ (-coef_b);
+      }      
+    }
+    
+    #pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm_r)
+    FAS_LOOP3_N(i,j,k,nx,ny,nz)
+    {
+      idx_t idx = H_INDEX(i, j, k, nx, ny, nz);
+      for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
+      {
 	real_t temp = 0;
-	idx_t idx = H_INDEX(i, j, k, nx, ny, nz);
+	fas_grid_t & jac_rhs = jac_rhs_h[eqn_id][depth_idx];
 	for(idx_t u_id =0; u_id < u_n; u_id++)
-	  temp += _evaluateDerEllipticEquation(eqn_id, depth_idx, i, j, k, u_id) - jac_rhs[idx];
-            
-	norm_r += temp * temp;
+	  temp += _evaluateDerEllipticEquation(eqn_id, depth_idx, i, j, k, u_id);
+	temp -= jac_rhs[idx];
+	norm_r += temp * temp;      
       }
     }
+    //    std::cout<<norm_r<<" "<<norm<<"\n";
           
     cnt++;
 
@@ -861,7 +860,7 @@ bool FASMultigrid::_jacobianRelax( idx_t depth, real_t norm, real_t C, idx_t p)
       return false;
     }
   }
-  //  std::cout<<norm_r<<"\n";
+
   return true;
 }
 
@@ -886,17 +885,16 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
   idx_t i, j, k, s;
   idx_t depth_idx = _dIdx(depth);
   idx_t nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-  real_t temp,  norm;
+  real_t   norm;
 
   for(s=0; s<max_iterations; ++s)
   {
     
-    temp = _getMaxResidualAllEqs( depth);
     // move this precision condition to the beginning in case
     // perfect initial geuss causes infinite number of
     // iterations for function: _jacobianRelax()
     
-    if(temp < relaxation_tolerance) // set precision
+    if(_getMaxResidualAllEqs( depth) < relaxation_tolerance) // set precision
       break;
 
     if(relax_scheme == inexact_newton
@@ -909,13 +907,13 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
       	fas_grid_t & jac_rhs = jac_rhs_h[eqn_id][depth_idx];
 	fas_grid_t & coarse_src = coarse_src_h[eqn_id][depth_idx];
 	
-	//	#pragma omp parallel for default(shared) private(i,j,k,temp) reduction(+:norm)
+#pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm)
 	FAS_LOOP3_N(i,j,k,nx,ny,nz)
 	{
       
 	  idx_t idx = H_INDEX(i, j, k, nx, ny, nz);
 
-	  temp = _evaluateEllipticEquationPt(eqn_id, depth_idx, i, j, k) - coarse_src[idx];
+	  real_t temp = _evaluateEllipticEquationPt(eqn_id, depth_idx, i, j, k) - coarse_src[idx];
 
 	  norm += temp * temp;
 
@@ -928,8 +926,8 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
       {
         break;
       }
-      
 
+      
       //get damping parameter lambda
       if(_getLambda(depth, norm) == false)
       {
@@ -945,12 +943,10 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
 
 
 
-void FASMultigrid::_printStrip(fas_heirarchy_set_t out_h, idx_t eqn_id, idx_t depth)
+void FASMultigrid::_printStrip(fas_grid_t &out)
 {
   idx_t i;
-  idx_t depth_idx = _dIdx(depth);
-  idx_t nx = nx_h[depth_idx], ny = ny_h[depth_idx], nz = nz_h[depth_idx];
-  fas_grid_t & out = out_h[eqn_id][_dIdx(depth)];
+  idx_t nx = out.nx, ny = out.ny, nz = out.nz;
   std::cout << std::fixed << std::setprecision(15) << "Values: { ";
   for(i=0; i<nx; i++)
   {
@@ -963,7 +959,30 @@ void FASMultigrid::_printStrip(fas_heirarchy_set_t out_h, idx_t eqn_id, idx_t de
 
 FASMultigrid::~FASMultigrid()
 {
-  
+  for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
+  {
+    for(idx_t depth = max_depth; depth >= min_depth; --depth)
+    {
+      idx_t depth_idx = _dIdx(depth);
+    
+
+      if(depth != max_depth) //can not delete the solution!!!!
+	delete [] u_h[eqn_id][depth_idx]._array;
+      delete [] coarse_src_h[eqn_id][depth_idx]._array;
+      delete [] tmp_h[eqn_id][depth_idx]._array;
+      delete [] damping_v_h[eqn_id][depth_idx]._array;
+      delete [] jac_rhs_h[eqn_id][depth_idx]._array;
+    }
+    for(idx_t mol_id = 0; mol_id < molecule_n[eqn_id]; mol_id++)
+    {
+      for(idx_t depth = max_depth; depth >= min_depth; --depth)
+      {
+	idx_t depth_idx = _dIdx(depth);
+	delete [] rho_h[eqn_id][mol_id][depth_idx]._array;
+      }
+    }
+  }
+
 }
 
 void FASMultigrid::build_rho()
@@ -1059,20 +1078,21 @@ void FASMultigrid::VCycles(idx_t num_cycles)
   _relaxSolution_GaussSeidel(max_depth, 10);
   std::cout << "  Final solution residual is: "
       << _getMaxResidualAllEqs(max_depth) << "\n" << std::flush;
-  /*std::cout << "  With average / min / max phi: "
-    << avg_sol << " / " << min_sol << " / " << max_sol << ".\n" << std::flush;*/
-
+  
   for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
   {
     if(_singularityExists(eqn_id, max_depth))
       std::cout << "  Warning! Solution crosses 0 at Eq. "<<eqn_id<<", solution may be singular at some points.\n";
     else
       std::cout << "  Solution for variable " << eqn_id<<" stays positive or negative (no singularities seem to exist).\n";
+    std::cout << "  With average / min / max value: "
+	      << u_h[eqn_id][max_depth_idx].avg() << " / " << u_h[eqn_id][max_depth_idx].min() << " / " << u_h[eqn_id][max_depth_idx].max() << ".\n" << std::flush;
+
   }
 }
 void FASMultigrid::printSolutionStrip(idx_t depth)
 {
-  _printStrip(u_h, 0, depth);
+  _printStrip(u_h[0][depth]);
 }
 
 
