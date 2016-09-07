@@ -84,13 +84,8 @@ class FASMultigrid
   fas_heirarchy_set_t * rho_h;         ///< source matter terms with number being rho_num;
  
 
-  // enum for relaxation type
-  enum relax_t { 
-    inexact_newton,
-    inexact_newton_constrained, // inexact Newton with volume constraint enforced
-    newton
-  };
-  relax_t relax_scheme;
+    
+
 
   
   idx_t u_n;          ///< variable number 
@@ -172,6 +167,31 @@ class FASMultigrid
 
 
  public:
+  
+  // enum for relaxation type
+  enum relax_t { 
+    inexact_newton,
+    inexact_newton_constrained, // inexact Newton with volume constraint enforced
+    newton
+  };
+
+  relax_t relax_scheme;
+  
+  enum atom_type {
+    const_f=0,
+    poly=1,
+    der1=2,
+    der2=3,
+    der3=4,
+    der11=5,
+    der22=6,
+    der33=7,
+    der12=8,
+    der13=9,
+    der23=10,
+    lap=11
+  };
+
     molecule ** eqns;
   FASMultigrid(fas_grid_t u_in[], idx_t u_n_in, idx_t molecule_n_in [],
 	       idx_t max_depth_in, idx_t max_relax_iters_in,  real_t relaxation_tolerance_in);

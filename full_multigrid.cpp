@@ -123,28 +123,28 @@ FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_
   }
   
   //initializing x, y and z derivative
-  der_type[0][0] = 1;
-  der_type[1][0] = 2;
-  der_type[2][0] = 3;
+  der_type[der1][0] = 1;
+  der_type[der2][0] = 2;
+  der_type[der3][0] = 3;
 
   //initializing 9 kinds of double derivative
-  der_type[3][0] = 1;
-  der_type[3][1] = 1;
+  der_type[der11][0] = 1;
+  der_type[der11][1] = 1;
 
-  der_type[4][0] = 2;
-  der_type[4][1] = 2;
+  der_type[der22][0] = 2;
+  der_type[der22][1] = 2;
 
-  der_type[5][0] = 3;
-  der_type[5][1] = 3;
+  der_type[der33][0] = 3;
+  der_type[der33][1] = 3;
 
-  der_type[6][0] = 1;
-  der_type[6][1] = 2;
+  der_type[der12][0] = 1;
+  der_type[der12][1] = 2;
 
-  der_type[7][0] = 1;
-  der_type[7][1] = 3;
+  der_type[der13][0] = 1;
+  der_type[der13][1] = 3;
 
-  der_type[8][0] = 2;
-  der_type[8][1] = 3;
+  der_type[der23][0] = 2;
+  der_type[der23][1] = 3;
 
   //type == 11 means laplacian!
 
@@ -194,12 +194,12 @@ real_t FASMultigrid::_evaluateEllipticEquationPt(idx_t eqn_id, idx_t depth_idx, 
       else if(ad.type <= 4)// first derivative type
       {
 	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
+	val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
       }
       else if(ad.type <= 10)
       {
 	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
+	val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
       }
       else
       {
@@ -269,16 +269,16 @@ void FASMultigrid::_evaluateIterationForJacEquation(idx_t eqn_id, idx_t depth_id
 	fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
 	if(u_id == ad.u_id)
 	{
-	  mol_to_a = mol_to_a * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd)
-	    + non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], jac_vd) ; 
-	  mol_to_b = mol_to_b * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
-	  non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
+	  mol_to_a = mol_to_a * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd)
+	    + non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], jac_vd) ; 
+	  mol_to_b = mol_to_b * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+	  non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
 	}
 	else
 	{
-	  non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
-	  mol_to_b *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
-	  mol_to_a *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
+	  non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+	  mol_to_b *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+	  mol_to_a *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
 	}
       }
       else if(ad.type <= 10)
@@ -288,17 +288,18 @@ void FASMultigrid::_evaluateIterationForJacEquation(idx_t eqn_id, idx_t depth_id
 
 	if(u_id == ad.u_id)
 	{
-	  mol_to_a = mol_to_a * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd)
-	    + non_der_val * (double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], jac_vd) + (ad.type <= 7) * double_der_coef[STENCIL_ORDER] * jac_vd[pos_idx] / (dx*dx));
-	  mol_to_b = mol_to_b * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd)
+	  mol_to_a = mol_to_a * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
+	    + non_der_val * (double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], der_type[ad.type][1], jac_vd) +
+                             (ad.type <= 7) * double_der_coef[STENCIL_ORDER] * jac_vd[pos_idx] / (dx*dx));
+	  mol_to_b = mol_to_b * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
 	    - (ad.type <= 7) * non_der_val * double_der_coef[STENCIL_ORDER]/(dx * dx);
-	  non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
-	  	}
+	  non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+        }
 	else
 	{
-	  non_der_val *=  double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
-	  mol_to_a *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
-	  mol_to_b *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
+	  non_der_val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+	  mol_to_a *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+	  mol_to_b *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
 	}
       }
       else
@@ -382,15 +383,15 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
         fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
         if(u_id == ad.u_id)
         {
-          der_val = non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], jac_vd)
-            + der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
-          non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
+          der_val = non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], jac_vd)
+            + der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+          non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
           
         }
         else
         {
-          non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
-          der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], vd);
+          non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+          der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
         }
       }
       else if(ad.type <= 10)
@@ -400,15 +401,15 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
 
         if(u_id == ad.u_id)
         {
-          der_val = non_der_val *  double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], jac_vd)
-            + der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd); 
-          non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
+          der_val = non_der_val *  double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], der_type[ad.type][1], jac_vd)
+            + der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd); 
+          non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
            
         }
         else
         {
-          non_der_val *=  double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
-          der_val  *=  double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type-2][0], der_type[ad.type-2][1], vd);
+          non_der_val *=  double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+          der_val  *=  double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
         }
       }
       else
@@ -558,8 +559,7 @@ void FASMultigrid::_interpolateCoarse2fine(fas_heirarchy_t grid_heirarchy, idx_t
             n_coarse_x*2, n_coarse_y*2, n_coarse_z*2);
 
           if(i_adj == 0 && j_adj == 0 && k_adj == 0)
-          {
-            
+          {            
             #pragma omp atomic
             fine_grid[fine_grid_loc] += coarse_grid_val;
           }
@@ -923,7 +923,6 @@ bool FASMultigrid::_jacobianRelax( idx_t depth, real_t norm, real_t C, idx_t p)
         norm_r += temp * temp;      
       }
     }
-    //    std::cout<<norm_r<<" "<<norm<<"\n";
           
     cnt++;
 
@@ -934,7 +933,6 @@ bool FASMultigrid::_jacobianRelax( idx_t depth, real_t norm, real_t C, idx_t p)
                 << cnt << " iterations.\n";
       return false;
     }
-    //std::cout<<norm_r<<" "<<norm<<"\n";
   }
 
   return true;
@@ -958,8 +956,9 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
     // move this precision condition to the beginning in case
     // perfect initial geuss causes infinite number of
     // iterations for function: _jacobianRelax()
-    
-    if(_getMaxResidualAllEqs( depth) < relaxation_tolerance) // set precision
+
+    // set tolenrance precision, which should be smaller when grids become more coarse
+    if(_getMaxResidualAllEqs( depth) < (relaxation_tolerance / pw2(1<<(max_depth_idx - depth_idx)) )) 
       break;
 
     if(relax_scheme == inexact_newton
@@ -972,7 +971,7 @@ void FASMultigrid::_relaxSolution_GaussSeidel( idx_t depth, idx_t max_iterations
         fas_grid_t & jac_rhs = jac_rhs_h[eqn_id][depth_idx];
         fas_grid_t & coarse_src = coarse_src_h[eqn_id][depth_idx];
         
-#pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm)
+        #pragma omp parallel for default(shared) private(i,j,k) reduction(+:norm)
         FAS_LOOP3_N(i,j,k,nx,ny,nz)
         {
       
@@ -1088,7 +1087,7 @@ void FASMultigrid::VCycle()
        _computeCoarseRestrictions(eqn_id, depth);
      _copyGrid(u_h, tmp_h, eqn_id, min_depth);
    }
-   //   std::cout<<_getMaxResidualAllEqs(min_depth + 1);
+
    for(coarse_depth = min_depth; coarse_depth < max_depth; coarse_depth++)
    {
      _relaxSolution_GaussSeidel(coarse_depth, max_relax_iters);
