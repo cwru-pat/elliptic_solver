@@ -19,19 +19,29 @@
       for(k=0; k<nz; ++k)
 namespace cosmo{
 
+
+/**
+ * @brief single element in a term
+ */
 typedef struct{
-  idx_t type;
-  idx_t u_id;
-  real_t value;
+  idx_t type;    ///< element type; 0 for constant function, 1 for polynomial, 2-10 for single and double derivatives, 11 for laplacian
+  idx_t u_id;    ///< id of varible needs to be solved, won't be visited when type = 0 or 1
+  real_t value;  ///< exponential value, has meaning only when type = 1
 }atom;
 
 
 
+/**
+ * @brief single term in a differential equation
+ * @details 
+ * combined by multiplication of "atoms"
+ */
 class molecule
 {
  public:
-  atom * atoms;
-  idx_t atom_n;
+  atom * atoms;      ///< vector storing "atoms"
+  idx_t atom_n;      ///< "atom" number
+  real_t const_coef; ///< constant coefficient of single term
 
   molecule()
   {
@@ -41,10 +51,12 @@ class molecule
   {
     delete [] atoms;
   }
-  void init(idx_t atom_n_in)
+  void init(idx_t atom_n_in, real_t const_coef_in)
   {
     atom_n = 0;
     atoms = new atom[atom_n_in];
+
+    const_coef = const_coef_in;
   }
   void add_atom(atom atom_in)
   {
@@ -56,19 +68,23 @@ class FASMultigrid
 {
   private:
 
+  // grid (array) type
   typedef arr_t fas_grid_t;
+  // heirarchy type (set of some grids at different depths)
   typedef arr_t * fas_heirarchy_t;
+  // set of heirarchies
   typedef fas_heirarchy_t * fas_heirarchy_set_t;
 
-  fas_heirarchy_set_t u_h;
-  fas_heirarchy_set_t tmp_h;
-  fas_heirarchy_set_t coarse_src_h;
-  fas_heirarchy_set_t jac_rhs_h;
-  fas_heirarchy_set_t damping_v_h;
-  fas_heirarchy_set_t * rho_h; //storing coefficient for each molecule in each equation
+  // define heirarchy of references to grids
+  fas_heirarchy_set_t u_h;             ///< field seeking a solution for
+  fas_heirarchy_set_t tmp_h;           ///< reusable grid for storing intermediate calculations
+  fas_heirarchy_set_t coarse_src_h;    ///< multigrid source term
+  fas_heirarchy_set_t jac_rhs_h;       ///< - F(u) which is rhs of Jacob Linear function
+  fas_heirarchy_set_t damping_v_h;     ///< _lap (u) - f, used to calculate F(u + \lambda v)
+  fas_heirarchy_set_t * rho_h;         ///< source matter terms with number being rho_num;
  
 
-    // enum for relaxation type
+  // enum for relaxation type
   enum relax_t { 
     inexact_newton,
     inexact_newton_constrained, // inexact Newton with volume constraint enforced
@@ -77,25 +93,34 @@ class FASMultigrid
   relax_t relax_scheme;
 
   
-  idx_t u_n;
+  idx_t u_n;          ///< variable number 
   
 
-  idx_t * molecule_n; //molecule number for each equation
+  idx_t * molecule_n; ///< molecule number for each equation
 
   
 
-  idx_t *nx_h, *ny_h, *nz_h;
+  idx_t *nx_h, *ny_h, *nz_h;  ///< number of grid points in each direction at different depths
 
-  real_t relaxation_tolerance;
+  real_t relaxation_tolerance;  ///< desired precision when performing relaxation
 
   idx_t max_depth, max_depth_idx;
   idx_t min_depth, min_depth_idx;
   idx_t total_depths, max_relax_iters;
 
-  idx_t der_type[12][2];
+  idx_t der_type[12][2];      ///< vectors that stores devivative directions
 
-  real_t double_der_coef[9];
-  
+  real_t double_der_coef[9];  ///< vectors that stores coefficients of f(x,y,z) for different stencils, used for jac equation iteration 
+
+  /**
+   * @brief indexing scheme of a grid heirarchy
+   * @description return index of grid at a particular depth
+   *  in a grid heirarchy
+   * 
+   * @param depth "depth" of grid
+   * @return index
+   */
+
   inline idx_t _dIdx(idx_t depth)
   {
     return depth - min_depth;
