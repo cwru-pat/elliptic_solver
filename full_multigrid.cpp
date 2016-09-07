@@ -893,7 +893,7 @@ bool FASMultigrid::_jacobianRelax( idx_t depth, real_t norm, real_t C, idx_t p)
     {
       fas_grid_t & damping_v = damping_v_h[eqn_id][depth_idx];
       fas_grid_t & jac_rhs = jac_rhs_h[eqn_id][depth_idx];
-
+      #pragma omp parallel for default(shared) private(j,k)
       FAS_LOOP3_N(i,j,k,nx,ny,nz)
       {
         idx_t idx = H_INDEX(i,j,k,nx,ny,nz);
