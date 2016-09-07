@@ -11,7 +11,7 @@ namespace cosmo{
  * @param[in]  set relaxation jump out precision
  */
 FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_in [],
-	      idx_t max_depth_in, idx_t max_relax_iters_in,  real_t relaxation_tolerance_in)
+              idx_t max_depth_in, idx_t max_relax_iters_in,  real_t relaxation_tolerance_in)
 {
   relax_scheme = relax_t::inexact_newton;
 
@@ -58,26 +58,26 @@ FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_
       if(depth_idx == _dIdx(max_depth))
       {
 
-	u_h[eqn_id][depth_idx]._array = u_in[eqn_id]._array;
+        u_h[eqn_id][depth_idx]._array = u_in[eqn_id]._array;
 
-	nx_h[depth_idx] = NX;
-	ny_h[depth_idx] = NY;
-	nz_h[depth_idx] = NZ;
-	u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-	u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-	u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-	u_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
+        nx_h[depth_idx] = NX;
+        ny_h[depth_idx] = NY;
+        nz_h[depth_idx] = NZ;
+        u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
+        u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
+        u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
+        u_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
       }
       else
       {
-	nx_h[depth_idx] = nx_h[depth_idx+1] / 2 + (nx_h[depth_idx+1] % 2);
-	ny_h[depth_idx] = ny_h[depth_idx+1] / 2 + (ny_h[depth_idx+1] % 2);
-	nz_h[depth_idx] = nz_h[depth_idx+1] / 2 + (nz_h[depth_idx+1] % 2);
-	u_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-	u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-	u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-	u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-	u_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
+        nx_h[depth_idx] = nx_h[depth_idx+1] / 2 + (nx_h[depth_idx+1] % 2);
+        ny_h[depth_idx] = ny_h[depth_idx+1] / 2 + (ny_h[depth_idx+1] % 2);
+        nz_h[depth_idx] = nz_h[depth_idx+1] / 2 + (nz_h[depth_idx+1] % 2);
+        u_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
+        u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
+        u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
+        u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
+        u_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
       }
 
       
@@ -112,12 +112,12 @@ FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_
       rho_h[eqn_id][mol_id] = new fas_grid_t[total_depths];
       for(idx_t depth = max_depth ; depth >= min_depth; depth--)
       {
-	idx_t depth_idx = _dIdx(depth);
-	rho_h[eqn_id][mol_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-	rho_h[eqn_id][mol_id][depth_idx].nx = nx_h[depth_idx];
-	rho_h[eqn_id][mol_id][depth_idx].ny = ny_h[depth_idx];
-	rho_h[eqn_id][mol_id][depth_idx].nz = nz_h[depth_idx];
-	rho_h[eqn_id][mol_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
+        idx_t depth_idx = _dIdx(depth);
+        rho_h[eqn_id][mol_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
+        rho_h[eqn_id][mol_id][depth_idx].nx = nx_h[depth_idx];
+        rho_h[eqn_id][mol_id][depth_idx].ny = ny_h[depth_idx];
+        rho_h[eqn_id][mol_id][depth_idx].nz = nz_h[depth_idx];
+        rho_h[eqn_id][mol_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
       }
     }
   }
@@ -184,27 +184,27 @@ real_t FASMultigrid::_evaluateEllipticEquationPt(idx_t eqn_id, idx_t depth_idx, 
       real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);     
       if(ad.type == 0) //constant
       {
-	val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+        val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
       }
       else if(ad.type == 1) //polynomial type
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= pow(vd[pos_idx], ad.value);
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        val *= pow(vd[pos_idx], ad.value);
       }
       else if(ad.type <= 4)// first derivative type
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
       }
       else if(ad.type <= 10)
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
       }
       else
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	val *= laplacian(i, j, k, vd.nx, vd.ny, vd.nz, vd);
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        val *= laplacian(i, j, k, vd.nx, vd.ny, vd.nz, vd);
       }
     }
     res += val;
@@ -242,70 +242,70 @@ void FASMultigrid::_evaluateIterationForJacEquation(idx_t eqn_id, idx_t depth_id
       real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);
       if(ad.type == 0) //constant
       {
-	non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-	mol_to_a *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-	mol_to_b *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+        non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+        mol_to_a *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+        mol_to_b *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
       }
       else if(ad.type == 1) //polynomial type
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         if(u_id == ad.u_id)
-	{
-	  mol_to_b = mol_to_b * pow(vd[pos_idx], ad.value) + non_der_val * ad.value * pow(vd[pos_idx], ad.value-1.0); 
-	  non_der_val = non_der_val * pow(vd[pos_idx], ad.value);
-	  mol_to_a *= pow(vd[pos_idx], ad.value);
+        {
+          mol_to_b = mol_to_b * pow(vd[pos_idx], ad.value) + non_der_val * ad.value * pow(vd[pos_idx], ad.value-1.0); 
+          non_der_val = non_der_val * pow(vd[pos_idx], ad.value);
+          mol_to_a *= pow(vd[pos_idx], ad.value);
 
-	}
-	else
-	{
-	  mol_to_b *= pow(vd[pos_idx], ad.value);
-	  mol_to_a *= pow(vd[pos_idx], ad.value);
-	  non_der_val *= pow(vd[pos_idx], ad.value);
-	}
+        }
+        else
+        {
+          mol_to_b *= pow(vd[pos_idx], ad.value);
+          mol_to_a *= pow(vd[pos_idx], ad.value);
+          non_der_val *= pow(vd[pos_idx], ad.value);
+        }
       }
       else if(ad.type <= 4)// first derivative type
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
-	if(u_id == ad.u_id)
-	{
-	  mol_to_a = mol_to_a * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd)
-	    + non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], jac_vd) ; 
-	  mol_to_b = mol_to_b * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
-	  non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
-	}
-	else
-	{
-	  non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
-	  mol_to_b *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
-	  mol_to_a *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
-	}
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
+        if(u_id == ad.u_id)
+        {
+          mol_to_a = mol_to_a * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd)
+            + non_der_val * derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], jac_vd) ; 
+          mol_to_b = mol_to_b * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+          non_der_val =non_der_val * derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+        }
+        else
+        {
+          non_der_val *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+          mol_to_b *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+          mol_to_a *= derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], vd);
+        }
       }
       else if(ad.type <= 10)
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
 
-	if(u_id == ad.u_id)
-	{
-	  mol_to_a = mol_to_a * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
-	    + non_der_val * (double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], der_type[ad.type][1], jac_vd) +
+        if(u_id == ad.u_id)
+        {
+          mol_to_a = mol_to_a * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
+            + non_der_val * (double_derivative(i, j, k, jac_vd.nx, jac_vd.ny, jac_vd.nz, der_type[ad.type][0], der_type[ad.type][1], jac_vd) +
                              (ad.type <= 7) * double_der_coef[STENCIL_ORDER] * jac_vd[pos_idx] / (dx*dx));
-	  mol_to_b = mol_to_b * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
-	    - (ad.type <= 7) * non_der_val * double_der_coef[STENCIL_ORDER]/(dx * dx);
-	  non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+          mol_to_b = mol_to_b * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd)
+            - (ad.type <= 7) * non_der_val * double_der_coef[STENCIL_ORDER]/(dx * dx);
+          non_der_val = non_der_val * double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
         }
-	else
-	{
-	  non_der_val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
-	  mol_to_a *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
-	  mol_to_b *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
-	}
+        else
+        {
+          non_der_val *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+          mol_to_a *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+          mol_to_b *= double_derivative(i, j, k, vd.nx, vd.ny, vd.nz, der_type[ad.type][0], der_type[ad.type][1], vd);
+        }
       }
       else
       {
-	fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
-	fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx]; 
+        fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
+        fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx]; 
 
         if(u_id == ad.u_id)
         {
@@ -1127,7 +1127,7 @@ void FASMultigrid::VCycles(idx_t num_cycles)
   for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
   {
     std::cout << " Solution for variable "<< eqn_id<<" has average / min / max value: "
-	      << u_h[eqn_id][max_depth_idx].avg() << " / " << u_h[eqn_id][max_depth_idx].min() << " / " << u_h[eqn_id][max_depth_idx].max() << ".\n" << std::flush;
+              << u_h[eqn_id][max_depth_idx].avg() << " / " << u_h[eqn_id][max_depth_idx].min() << " / " << u_h[eqn_id][max_depth_idx].max() << ".\n" << std::flush;
 
   }
 }

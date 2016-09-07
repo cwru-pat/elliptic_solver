@@ -194,7 +194,7 @@ class FASMultigrid
 
     molecule ** eqns;
   FASMultigrid(fas_grid_t u_in[], idx_t u_n_in, idx_t molecule_n_in [],
-	       idx_t max_depth_in, idx_t max_relax_iters_in,  real_t relaxation_tolerance_in);
+               idx_t max_depth_in, idx_t max_relax_iters_in,  real_t relaxation_tolerance_in);
   ~FASMultigrid();
   void add_atom_to_eqn(atom atom_in, idx_t molecule_id, idx_t eqn_id);
 
@@ -231,10 +231,10 @@ class FASMultigrid
   void _computeCoarseRestrictions(idx_t eqn_id, idx_t fine_depth);
 
   void _changeApproximateSolutionToError(fas_heirarchy_t  appx_to_err_h,
-					 fas_heirarchy_t  exact_soln_h, idx_t depth);
+                                         fas_heirarchy_t  exact_soln_h, idx_t depth);
 
   void _correctFineFromCoarseErr_Err2Appx(fas_heirarchy_t err2appx_h,
-					  fas_heirarchy_t  appx_soln_h, idx_t fine_depth);
+                                          fas_heirarchy_t  appx_soln_h, idx_t fine_depth);
 
   void _copyGrid(fas_heirarchy_t from_h[], fas_heirarchy_t to_h[], idx_t eqn_id, idx_t depth);
 
