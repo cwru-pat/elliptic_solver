@@ -1,4 +1,4 @@
-#include "multigrid.h"
+#include "full_multigrid.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -8,7 +8,6 @@ typedef FASMultigrid multigrid_t;
 
 int main(int argc, char **argv)
 {
-   
   srand(129);
   std::cout.precision(15);
 
@@ -37,7 +36,7 @@ int main(int argc, char **argv)
 
   std::cout << "  initializing...\n";
   multigrid.setTrialSolution(0);
-  multigrid.add_poly_srcs(0); 
+  multigrid.add_poly_srcs(0);
   std::cout << "  done.\n";
 
   std::cout << "Performing V-Cycles...\n";
