@@ -171,7 +171,6 @@ class FASMultigrid
   
   enum atom_type
   {
-    const_f = 0,
     poly = 1,
     der1 = 2,
     der2 = 3,

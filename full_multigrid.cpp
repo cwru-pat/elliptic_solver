@@ -65,6 +65,7 @@ FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_
         nx_h[depth_idx] = NX;
         ny_h[depth_idx] = NY;
         nz_h[depth_idx] = NZ;
+        
         u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
         u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
         u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
@@ -77,50 +78,19 @@ FASMultigrid::FASMultigrid(fas_heirarchy_t u_in, idx_t u_n_in, idx_t molecule_n_
         nz_h[depth_idx] = nz_h[depth_idx+1] / 2 + (nz_h[depth_idx+1] % 2);
 
         u_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-        u_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-        u_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-        u_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-        u_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
       }
       
       coarse_src_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-      coarse_src_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-      coarse_src_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-      coarse_src_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-      coarse_src_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
 
       damping_v_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-      damping_v_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-      damping_v_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-      damping_v_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-      damping_v_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
       
       jac_rhs_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-      jac_rhs_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-      jac_rhs_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-      jac_rhs_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-      jac_rhs_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
 
       tmp_h[eqn_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-      tmp_h[eqn_id][depth_idx].nx = nx_h[depth_idx];
-      tmp_h[eqn_id][depth_idx].ny = ny_h[depth_idx];
-      tmp_h[eqn_id][depth_idx].nz = nz_h[depth_idx];
-      tmp_h[eqn_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
     }
 
     for(idx_t mol_id = 0; mol_id < molecule_n[eqn_id]; mol_id++)
-    {
       rho_h[eqn_id][mol_id] = new fas_grid_t[total_depths];
-      for(idx_t depth = max_depth ; depth >= min_depth; depth--)
-      {
-        idx_t depth_idx = _dIdx(depth);
-        rho_h[eqn_id][mol_id][depth_idx].init(nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-        rho_h[eqn_id][mol_id][depth_idx].nx = nx_h[depth_idx];
-        rho_h[eqn_id][mol_id][depth_idx].ny = ny_h[depth_idx];
-        rho_h[eqn_id][mol_id][depth_idx].nz = nz_h[depth_idx];
-        rho_h[eqn_id][mol_id][depth_idx].pts = nx_h[depth_idx] * ny_h[depth_idx] * nz_h[depth_idx];
-      }
-    }
   }
   
   // initializing x, y and z derivative
@@ -179,17 +149,18 @@ real_t FASMultigrid::_evaluateEllipticEquationPt(idx_t eqn_id, idx_t depth_idx,
   {
     // value will end up being the value of a particular term in an equation
     real_t val = eqns[eqn_id][mol_id].const_coef;
+    real_t pos_idx = H_INDEX(i, j, k,
+       nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
+
+    if(rho_h[eqn_id][mol_id][depth_idx].pts > 0) // constant
+      val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+    
+    
     for(idx_t atom_id = 0; atom_id < eqns[eqn_id][mol_id].atom_n; atom_id++)
     {
       atom & ad = eqns[eqn_id][mol_id].atoms[atom_id];
-      real_t pos_idx = H_INDEX(i, j, k,
-        nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
-
-      if(ad.type == 0) // constant
-      {
-        val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-      }
-      else if(ad.type == 1) // polynomial type
+      
+      if(ad.type == 1) // polynomial type
       {
         fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         val *= pow(vd[pos_idx], ad.value);
@@ -241,19 +212,17 @@ void FASMultigrid::_evaluateIterationForJacEquation(idx_t eqn_id,
   {
     real_t mol_to_a = 0.0, mol_to_b = 0.0;
     real_t non_der_val = eqns[eqn_id][mol_id].const_coef;
+    real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);
+
+    if(rho_h[eqn_id][mol_id][depth_idx].pts > 0) // constant
+     non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+
     // pre_val to help keep track of the result of terms with only one derivative
     for(idx_t atom_id = 0; atom_id < eqns[eqn_id][mol_id].atom_n; atom_id++)
     {
       atom & ad =  eqns[eqn_id][mol_id].atoms[atom_id];
       
-      real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);
-      if(ad.type == 0) // constant
-      {
-        non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-        mol_to_a *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-        mol_to_b *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-      }
-      else if(ad.type == 1) // polynomial type
+      if(ad.type == 1) // polynomial type
       {
         fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         if(u_id == ad.u_id)
@@ -356,17 +325,17 @@ real_t FASMultigrid::_evaluateDerEllipticEquation(idx_t eqn_id, idx_t depth_idx,
   {
     real_t non_der_val = eqns[eqn_id][mol_id].const_coef, der_val = 0.0;
     // pre_val to help keep track of the result of terms with only one derivative
+
+    real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);
+
+    if(rho_h[eqn_id][mol_id][depth_idx].pts > 0) // constant
+      non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
+
     for(idx_t atom_id = 0; atom_id < eqns[eqn_id][mol_id].atom_n; atom_id++)
     {
       atom & ad =  eqns[eqn_id][mol_id].atoms[atom_id];
 
-      real_t pos_idx = H_INDEX(i,j,k,nx_h[depth_idx],ny_h[depth_idx],nz_h[depth_idx]);
-      if(ad.type == 0) // constant
-      {
-        non_der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-        der_val *= rho_h[eqn_id][mol_id][depth_idx][pos_idx];
-      }
-      else if(ad.type == 1) // polynomial type
+      if(ad.type == 1) // polynomial type
       {
         fas_grid_t & vd =  u_h[ad.u_id][depth_idx];
         fas_grid_t & jac_vd =  damping_v_h[u_id][depth_idx];
@@ -684,7 +653,7 @@ real_t FASMultigrid::_getMaxResidualAllEqs(idx_t depth)
   real_t max_for_all = 0;
   for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
   {
-     max_for_all = std::max(max_for_all, _getMaxResidual(eqn_id, depth));
+    max_for_all = std::max(max_for_all, _getMaxResidual(eqn_id, depth));
   }
   return max_for_all;
 }
@@ -1046,6 +1015,7 @@ FASMultigrid::~FASMultigrid()
       for(idx_t depth = max_depth; depth >= min_depth; --depth)
       {
         idx_t depth_idx = _dIdx(depth);
+        if(rho_h[eqn_id][mol_id][depth_idx].pts > 0)
         delete [] rho_h[eqn_id][mol_id][depth_idx]._array;
       }
     }
@@ -1059,6 +1029,24 @@ FASMultigrid::~FASMultigrid()
  */
 void FASMultigrid::initializeRhoHeirarchy()
 {
+
+  //allocate space for rho first
+  for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
+  {
+    for(idx_t mol_id = 0; mol_id < molecule_n[eqn_id]; mol_id++)
+    {
+      for(idx_t depth = max_depth-1; depth >= min_depth; --depth)
+      {
+        idx_t depth_idx = _dIdx(depth);
+        if(rho_h[eqn_id][mol_id][depth_idx+1].pts > 0) //there is rho needs to be built
+          rho_h[eqn_id][mol_id][depth_idx].init(
+            nx_h[depth_idx], ny_h[depth_idx], nz_h[depth_idx]);
+
+      }
+    }
+  }
+
+  
   // restrict supplied rho to coarser grids
   for(idx_t eqn_id = 0; eqn_id < u_n; eqn_id++)
   {
@@ -1066,10 +1054,14 @@ void FASMultigrid::initializeRhoHeirarchy()
     {
       for(idx_t depth = max_depth; depth > min_depth; --depth)
       {
-        _restrictFine2coarse(rho_h[eqn_id][mol_id], depth);
+        idx_t depth_idx = _dIdx(depth);
+        if(rho_h[eqn_id][mol_id][depth_idx].pts > 0) //there is rho needs to be built
+          _restrictFine2coarse(rho_h[eqn_id][mol_id], depth);
+
       }
     }
   }
+
 }
 
   
@@ -1144,7 +1136,14 @@ void FASMultigrid::setPolySrcAtPt(idx_t eqn_id, idx_t mol_id, idx_t i, idx_t j, 
   idx_t idx = H_INDEX(i, j, k,
     nx_h[max_depth_idx], ny_h[max_depth_idx], nz_h[max_depth_idx]);
 
+  if(rho_h[eqn_id][mol_id][max_depth_idx].pts == 0)
+  {
+    rho_h[eqn_id][mol_id][max_depth_idx].init(
+      nx_h[max_depth_idx], ny_h[max_depth_idx], nz_h[max_depth_idx]);
+  }
+
   rho_h[eqn_id][mol_id][max_depth_idx][idx] = value;
+
 }
   
 } // namespace cosmo
